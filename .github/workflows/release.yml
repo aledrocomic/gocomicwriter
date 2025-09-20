@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  ARTIFACT_DIR: dist
+
+jobs:
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            ext: ''
+          - goos: linux
+            goarch: arm64
+            ext: ''
+          - goos: windows
+            goarch: amd64
+            ext: '.exe'
+          - goos: darwin
+            goarch: amd64
+            ext: ''
+          - goos: darwin
+            goarch: arm64
+            ext: ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+
+      - name: Prepare
+        run: |
+          mkdir -p "$ARTIFACT_DIR"
+          echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_ENV
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          BIN="gocomic-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
+          go build -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/$BIN" ./cmd/gocomic
+
+      - name: Package
+        run: |
+          cd "$ARTIFACT_DIR"
+          BIN="gocomic-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
+          PKG_PREFIX="gocomic_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          if [ "${{ matrix.ext }}" = ".exe" ]; then
+            zip -9 "$PKG_PREFIX.zip" "$BIN"
+            echo "PACKAGE=$PKG_PREFIX.zip" >> $GITHUB_ENV
+          else
+            tar -czf "$PKG_PREFIX.tar.gz" "$BIN"
+            echo "PACKAGE=$PKG_PREFIX.tar.gz" >> $GITHUB_ENV
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE }}
+          path: ${{ env.ARTIFACT_DIR }}/${{ env.PACKAGE }}
+
+  release:
+    name: Create GitHub Release and Publish
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+
+      - name: Configure AWS credentials (OIDC)
+        if: vars.S3_BUCKET != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Publish to S3 (optional)
+        if: vars.S3_BUCKET != ''
+        run: |
+          aws s3 sync dist/ "s3://${{ vars.S3_BUCKET }}/releases/${GITHUB_REF_NAME}/" --acl public-read --only-show-errors
