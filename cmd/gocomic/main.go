@@ -11,22 +11,88 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"time"
 
+	"gocomic/internal/domain"
+	"gocomic/internal/storage"
 	"gocomic/internal/version"
 )
 
+func usage() {
+	fmt.Println("Go Comic Writer — development skeleton")
+	fmt.Printf("Version: %s\n", version.String())
+	fmt.Println()
+	fmt.Println("Usage:")
+	fmt.Println("  gocomic version|-v|--version        Show version")
+	fmt.Println("  gocomic init <dir> <name>            Create a new project at <dir> with name <name>")
+	fmt.Println("  gocomic open <dir>                    Open project at <dir> and print summary")
+	fmt.Println("  gocomic save <dir>                    Save project at <dir> (creates backup) ")
+}
+
 func main() {
-	// Minimal CLI entrypoint for the Go Comic Writer project.
-	// For now, it prints a banner and an optional version.
 	args := os.Args
 	if len(args) > 1 {
 		switch args[1] {
 		case "version", "--version", "-v":
 			fmt.Println(version.String())
 			return
+		case "init":
+			if len(args) < 4 {
+				fmt.Println("init requires <dir> and <name>")
+				usage()
+				os.Exit(2)
+			}
+			dir := args[2]
+			name := args[3]
+			abs, _ := filepath.Abs(dir)
+			p := domain.Project{Name: name, Issues: []domain.Issue{}}
+			if _, err := storage.InitProject(abs, p); err != nil {
+				fmt.Println("Error:", err)
+				os.Exit(1)
+			}
+			fmt.Println("Created project at", abs)
+			return
+		case "open":
+			if len(args) < 3 {
+				fmt.Println("open requires <dir>")
+				usage()
+				os.Exit(2)
+			}
+			dir := args[2]
+			abs, _ := filepath.Abs(dir)
+			h, err := storage.Open(abs)
+			if err != nil {
+				fmt.Println("Error:", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Opened project: %s\n", h.Project.Name)
+			fmt.Printf("Issues: %d\n", len(h.Project.Issues))
+			fmt.Println("Root:", h.Root)
+			return
+		case "save":
+			if len(args) < 3 {
+				fmt.Println("save requires <dir>")
+				usage()
+				os.Exit(2)
+			}
+			dir := args[2]
+			abs, _ := filepath.Abs(dir)
+			h, err := storage.Open(abs)
+			if err != nil {
+				fmt.Println("Error:", err)
+				os.Exit(1)
+			}
+			// Touch metadata to ensure changed content for demo purposes
+			h.Project.Metadata.Notes = fmt.Sprintf("Saved at %s", time.Now().Format(time.RFC3339))
+			if err := storage.Save(h); err != nil {
+				fmt.Println("Error:", err)
+				os.Exit(1)
+			}
+			fmt.Println("Saved project and created a backup of previous manifest (if any).")
+			return
 		}
 	}
 
-	fmt.Println("Go Comic Writer — development skeleton")
-	fmt.Printf("Version: %s\n", version.String())
+	usage()
 }
