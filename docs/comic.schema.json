@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/comic.schema.json",
+  "title": "Go Comic Writer Project Manifest (comic.json)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "issues"],
+  "properties": {
+    "name": {"type": "string", "minLength": 1},
+    "metadata": {
+      "$ref": "#/$defs/Metadata"
+    },
+    "issues": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Issue"}
+    }
+  },
+  "$defs": {
+    "Metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "series": {"type": "string"},
+        "issueTitle": {"type": "string"},
+        "creators": {"type": "string"},
+        "notes": {"type": "string"}
+      }
+    },
+    "Issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trimWidth", "trimHeight", "bleed", "dpi", "readingDirection", "pages"],
+      "properties": {
+        "trimWidth": {"type": "number", "minimum": 0},
+        "trimHeight": {"type": "number", "minimum": 0},
+        "bleed": {"type": "number", "minimum": 0},
+        "dpi": {"type": "integer", "minimum": 1},
+        "readingDirection": {"type": "string", "enum": ["ltr", "rtl"]},
+        "pages": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/Page"}
+        }
+      }
+    },
+    "Page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "panels"],
+      "properties": {
+        "number": {"type": "integer", "minimum": 1},
+        "grid": {"type": "string"},
+        "panels": {"type": "array", "items": {"$ref": "#/$defs/Panel"}},
+        "layers": {"type": "array", "items": {"$ref": "#/$defs/Layer"}},
+        "styles": {"type": "array", "items": {"$ref": "#/$defs/Style"}}
+      }
+    },
+    "Layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "z"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "name": {"type": "string"},
+        "z": {"type": "integer"},
+        "notes": {"type": "string"}
+      }
+    },
+    "Panel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "geometry", "zOrder"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "geometry": {"$ref": "#/$defs/Rect"},
+        "zOrder": {"type": "integer"},
+        "linkedBeats": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "balloons": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/Balloon"}
+        },
+        "notes": {"type": "string"}
+      }
+    },
+    "Balloon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "textRuns", "shape"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "enum": ["speech", "whisper", "thought", "caption", "sfx"]},
+        "textRuns": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/TextRun"}},
+        "shape": {"$ref": "#/$defs/Shape"},
+        "tail": {"$ref": "#/$defs/Tail"},
+        "styleRef": {"type": "string"}
+      }
+    },
+    "TextRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["content", "font", "size"],
+      "properties": {
+        "content": {"type": "string"},
+        "font": {"type": "string"},
+        "size": {"type": "number", "exclusiveMinimum": 0},
+        "tracking": {"type": "number"},
+        "leading": {"type": "number"},
+        "kerning": {"type": "number"},
+        "styleRef": {"type": "string"}
+      }
+    },
+    "Style": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string"},
+        "font": {"type": "string"},
+        "fill": {"$ref": "#/$defs/Color"},
+        "stroke": {"$ref": "#/$defs/Stroke"},
+        "fx": {"$ref": "#/$defs/FX"}
+      }
+    },
+    "Rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": {"type": "number"},
+        "y": {"type": "number"},
+        "width": {"type": "number", "minimum": 0},
+        "height": {"type": "number", "minimum": 0}
+      }
+    },
+    "Shape": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "rect"],
+      "properties": {
+        "kind": {"type": "string", "enum": ["ellipse", "roundedBox", "rect", "path"]},
+        "rect": {"$ref": "#/$defs/Rect"},
+        "radius": {"type": "number", "minimum": 0}
+      }
+    },
+    "Tail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["anchorX", "anchorY"],
+      "properties": {
+        "anchorX": {"type": "number"},
+        "anchorY": {"type": "number"},
+        "angle": {"type": "number"}
+      }
+    },
+    "Color": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["r", "g", "b", "a"],
+      "properties": {
+        "r": {"type": "integer", "minimum": 0, "maximum": 255},
+        "g": {"type": "integer", "minimum": 0, "maximum": 255},
+        "b": {"type": "integer", "minimum": 0, "maximum": 255},
+        "a": {"type": "integer", "minimum": 0, "maximum": 255}
+      }
+    },
+    "Stroke": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["color", "width"],
+      "properties": {
+        "color": {"$ref": "#/$defs/Color"},
+        "width": {"type": "number", "minimum": 0}
+      }
+    },
+    "FX": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "outline": {"type": "boolean"},
+        "shadow": {"type": "boolean"},
+        "blur": {"type": "number", "minimum": 0}
+      }
+    }
+  }
+}

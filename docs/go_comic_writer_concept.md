@@ -108,8 +108,8 @@ Empower writers and comic teams to go from script to lettered pages in one strea
 ## Milestones and Task List
 
 ### Phase 0 — Foundation
-- [ ] Initialize Go modules and workspace layout.
-- [ ] Define domain models and JSON schema for comic.json.
+- [x] Initialize Go modules and workspace layout.
+- [x] Define domain models and JSON schema for comic.json.
 - [ ] Implement file I/O: create/open/save project; transactional writes; backups.
 - [ ] Implement logging, error reporting, and crash-safe autosave.
 
