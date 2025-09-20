@@ -1,1 +1,28 @@
-.idea
+# IDE settings
+.idea/
+.vscode/
+
+# Binaries and build outputs
+bin/
+dist/
+build/
+
+# Go build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Coverage & profiling
+coverage/
+coverage.*
+profile.cov
+
+# Modules/vendor
+vendor/
+
+# OS noise
+.DS_Store
+Thumbs.db
