@@ -17,8 +17,8 @@ If you simply want a working pipeline fast, follow Steps 1–4 and use the provi
 - CD on a git tag like `v0.1.0`: builds cross‑platform binaries, attaches them to a GitHub Release, and optionally mirrors them to S3
 
 Project specifics:
-- Module: `gocomic`
-- Entry point: `./cmd/gocomic`
+- Module: `gocomicwriter`
+- Entry point: `./cmd/gocomicwriter`
 - Go version: `1.23`
 - No tests at the moment; CI focuses on fast sanity checks
 
@@ -36,7 +36,7 @@ Project specifics:
 
 If you want artifacts also available from AWS (in addition to GitHub Releases):
 
-- Choose an S3 bucket name (e.g., `gocomic-artifacts-<account-id>-<region>`)
+- Choose an S3 bucket name (e.g., `gocomicwriter-artifacts-<account-id>-<region>`)
 - Create the bucket in your preferred region
 - If you plan to serve files publicly, enable public read for objects via a bucket policy or serve via CloudFront. Example minimal bucket policy (public read of objects):
 
@@ -49,7 +49,7 @@ If you want artifacts also available from AWS (in addition to GitHub Releases):
       "Effect": "Allow",
       "Principal": "*",
       "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::gocomic-artifacts-<account-id>-<region>/*"
+      "Resource": "arn:aws:s3:::gocomicwriter-artifacts-<account-id>-<region>/*"
     }
   ]
 }
@@ -77,6 +77,10 @@ If your account already has this provider, you can reuse it.
 - Identity provider: `token.actions.githubusercontent.com`
 - Audience: `sts.amazonaws.com`
 - Add a trust policy that limits which repo/branches/tags can assume the role (replace `OWNER` and `REPO`):
+
+  Important:
+  - Paste the JSON below into the role’s Trust relationships policy (when creating the role or on the role page → Trust relationships → Edit). Do not attach it as a permissions policy or a bucket policy. If the console complains about a missing Resource field, you’re in the wrong editor.
+  - If you see “Unsupported principal” or “Invalid principal” errors, make sure you completed Step 3.1 to create the OIDC provider and that the ARN matches exactly: `arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com`. Also replace `<ACCOUNT_ID>`, `OWNER`, and `REPO` with your actual values.
 
 ```
 {
@@ -115,13 +119,13 @@ If your account already has this provider, you can reuse it.
       "Sid": "WriteArtifactsToBucket",
       "Effect": "Allow",
       "Action": ["s3:PutObject", "s3:PutObjectAcl", "s3:DeleteObject"],
-      "Resource": "arn:aws:s3:::gocomic-artifacts-<account-id>-<region>/*"
+      "Resource": "arn:aws:s3:::gocomicwriter-artifacts-<account-id>-<region>/*"
     },
     {
       "Sid": "ListBucket",
       "Effect": "Allow",
       "Action": ["s3:ListBucket"],
-      "Resource": "arn:aws:s3:::gocomic-artifacts-<account-id>-<region>"
+      "Resource": "arn:aws:s3:::gocomicwriter-artifacts-<account-id>-<region>"
     },
     {
       "Sid": "InvalidateCloudFront",
@@ -133,7 +137,7 @@ If your account already has this provider, you can reuse it.
 }
 ```
 
-Record the role ARN, e.g., `arn:aws:iam::<ACCOUNT_ID>:role/github-actions-gocomic`.
+Record the role ARN, e.g., `arn:aws:iam::<ACCOUNT_ID>:role/github-actions-gocomicwriter`.
 
 ---
 
@@ -228,9 +232,9 @@ phases:
     commands:
       - mkdir -p "$ARTIFACT_DIR"
       - echo "Building for linux/amd64..."
-      - GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/gocomic-linux-amd64" ./cmd/gocomic
+      - GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/gocomicwriter-linux-amd64" ./cmd/gocomicwriter
       - echo "Building for windows/amd64..."
-      - GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/gocomic-windows-amd64.exe" ./cmd/gocomic
+      - GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/gocomicwriter-windows-amd64.exe" ./cmd/gocomicwriter
   post_build:
     commands:
       - |
