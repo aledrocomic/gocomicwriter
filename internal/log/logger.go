@@ -284,12 +284,16 @@ func (h *prettyTextHandler) Handle(_ context.Context, r slog.Record) error {
 		writeAttrs(recAttrs)
 	}
 	if h.opts.AddSource {
-		if fr := r.Source(); fr != nil {
-			b.WriteString(" ")
-			b.WriteString("src=")
-			b.WriteString(fr.File)
-			b.WriteString(":")
-			b.WriteString(strconv.FormatInt(int64(fr.Line), 10))
+		// Use a version-tolerant way to access source info. Newer Go versions
+		// expose Record.Source() *slog.Source; older ones do not.
+		if rw, ok := any(r).(interface{ Source() *slog.Source }); ok {
+			if src := rw.Source(); src != nil {
+				b.WriteString(" ")
+				b.WriteString("src=")
+				b.WriteString(src.File)
+				b.WriteString(":")
+				b.WriteString(strconv.FormatInt(int64(src.Line), 10))
+			}
 		}
 	}
 	b.WriteString("\n")
