@@ -31,16 +31,17 @@ Go Comic Writer is an in‑progress toolchain for comic writing and lettering. I
 The long‑term plan is a desktop application with a canvas editor and exporters (PDF/PNG/SVG/CBZ). See the concept document for details.
 
 ## Current features (alpha)
-- CLI commands: version, init, open, save.
+- CLI commands: version, init, open, save, ui.
 - Transactional project storage with a human‑readable manifest (comic.json) and timestamped backups under backups/.
 - Crash safety: on panic, write a crash report and autosave snapshot; on open, fall back to the latest valid backup if the manifest is unreadable.
 - Structured logging via Go's slog with simple env configuration; optional rotating file via GCW_LOG_FILE.
 - Core domain model in internal/domain and a public JSON schema at docs/comic.schema.json.
+- Basic desktop UI shell (behind build tag `fyne`) with a placeholder canvas editor that shows page/trim/bleed guides, simple pan/zoom, and File→Open/Save.
 - Sample project manifest at tmp_proj/comic.json (with backups under tmp_proj/backups/).
 - Unit tests for core packages (storage, logging, crash, version, schema).
 
 What’s not here yet:
-- Rendering/lettering engine and UI.
+- Rendering/lettering engine (beyond the placeholder canvas) and exporters.
 - Exporters (PDF/PNG/SVG/CBZ).
 
 ## Install and quick start
@@ -81,6 +82,7 @@ gocomicwriter version | -v | --version   Show version
 gocomicwriter init <dir> <name>           Create a new project at <dir> with name <name>
 gocomicwriter open <dir>                  Open project at <dir> and print summary
 gocomicwriter save <dir>                  Save project at <dir> (creates backup)
+gocomicwriter ui [<dir>]                  Launch desktop UI (build with -tags fyne)
 ```
 
 Examples:
@@ -90,6 +92,46 @@ Examples:
   - .\bin\gocomicwriter.exe open .\tmp_proj
   - .\bin\gocomicwriter.exe save .\tmp_proj
 - Or if installed into PATH: gocomicwriter -v
+
+### Run the basic UI (experimental)
+The repository includes a minimal desktop UI shell guarded by the `fyne` build tag.
+
+Build and run directly (no binary):
+
+```bash
+# Open the sample project (Windows PowerShell)
+go run -tags fyne ./cmd/gocomicwriter ui .\tmp_proj
+
+# On macOS/Linux
+GOFLAGS='' go run -tags fyne ./cmd/gocomicwriter ui ./tmp_proj
+```
+
+Or build a binary with UI support:
+
+```bash
+# Windows
+go build -tags fyne -o bin/gocomicwriter-ui.exe ./cmd/gocomicwriter
+
+# macOS/Linux
+go build -tags fyne -o bin/gocomicwriter-ui ./cmd/gocomicwriter
+```
+
+Then run:
+
+```bash
+bin/gocomicwriter-ui ui ./tmp_proj
+```
+
+Notes and controls:
+- File → Open to select a project folder; File → Save writes comic.json (with a timestamped backup of the previous manifest).
+- Center canvas shows a page rectangle with bleed (blue) and trim (red) guides.
+- Drag with mouse to pan.
+- Ctrl + Mouse Wheel to zoom in/out.
+- Window title shows the project name when opened.
+
+Troubleshooting:
+- Linux may require OpenGL drivers and a working X11/Wayland setup. On headless CI this UI is not built by default.
+- If you see "UI not built in this binary", rebuild with `-tags fyne`.
 
 Notes:
 - init scaffolds standard subfolders (script, pages, assets, styles, exports, backups) and writes comic.json.

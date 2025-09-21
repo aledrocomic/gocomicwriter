@@ -207,7 +207,7 @@ Alignment with Definition of Done:
 - [✓] Implement logging, error reporting, and crash-safe autosave.
 - [✓] Implement file I/O: create/open/save project; transactional writes; backups.
 - [✓] Implement fist tests to start etsting early.
-- [ ] Implement basic UI shell with canvas editor.
+- [✓] Implement basic UI shell with canvas editor.
 - [✓] Implement basic storage layer with JSON manifest.
 
 ### Phase 1 — Core Rendering & Geometry
