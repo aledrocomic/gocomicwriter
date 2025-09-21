@@ -45,6 +45,7 @@ func main() {
 	if len(args) > 1 {
 		switch args[1] {
 		case "version", "--version", "-v":
+			fmt.Println("Go Comic Writer — development skeleton")
 			fmt.Println(version.String())
 			return
 		case "init":
