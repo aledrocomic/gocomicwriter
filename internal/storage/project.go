@@ -284,3 +284,37 @@ func openFromLatestBackup(root string) (*domain.Project, error) {
 	}
 	return &p, nil
 }
+
+// AutosaveCrashSnapshot writes a crash-recovery snapshot of the current project
+// manifest into the backups directory without touching the main manifest file.
+// The file name is comic.json.crash-<timestamp>.autosave for easy identification.
+func AutosaveCrashSnapshot(ph *ProjectHandle) (string, error) {
+	l := applog.WithOperation(applog.WithComponent("storage"), "autosave_crash")
+	if ph == nil {
+		return "", errors.New("nil ProjectHandle")
+	}
+	if ph.Root == "" {
+		return "", errors.New("invalid ProjectHandle: missing root")
+	}
+	bdir := filepath.Join(ph.Root, BackupsDirName)
+	if err := os.MkdirAll(bdir, 0o755); err != nil {
+		l.Error("ensure backups dir failed", slog.Any("err", err))
+		return "", fmt.Errorf("ensure backups dir: %w", err)
+	}
+	stamp := time.Now().Format("20060102-150405")
+	fname := fmt.Sprintf("%s.crash-%s.autosave", ManifestFileName, stamp)
+	bpath := filepath.Join(bdir, fname)
+
+	data, err := json.MarshalIndent(ph.Project, "", "  ")
+	if err != nil {
+		l.Error("marshal crash snapshot failed", slog.Any("err", err))
+		return "", fmt.Errorf("marshal crash snapshot: %w", err)
+	}
+	data = append(data, '\n')
+	if werr := writeFileSync(bpath, data); werr != nil {
+		l.Error("write crash snapshot failed", slog.Any("err", werr))
+		return "", fmt.Errorf("write crash snapshot: %w", werr)
+	}
+	l.Info("crash snapshot written", slog.String("path", bpath))
+	return bpath, nil
+}

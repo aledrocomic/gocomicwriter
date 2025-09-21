@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"gocomic/internal/crash"
 	"gocomic/internal/domain"
 	applog "gocomic/internal/log"
 	"gocomic/internal/storage"
@@ -36,6 +37,8 @@ func main() {
 	// initialize structured logging using environment defaults
 	applog.Init(applog.FromEnv())
 	l := applog.WithComponent("cli")
+	var ph *storage.ProjectHandle
+	defer func() { crash.Recover(ph) }()
 
 	args := os.Args
 	l.Debug("start", slog.Int("args", len(args)))
@@ -55,11 +58,13 @@ func main() {
 			abs, _ := filepath.Abs(dir)
 			l.Info("init project", slog.String("root", abs), slog.String("name", name))
 			p := domain.Project{Name: name, Issues: []domain.Issue{}}
-			if _, err := storage.InitProject(abs, p); err != nil {
+			h, err := storage.InitProject(abs, p)
+			if err != nil {
 				l.Error("init failed", slog.Any("err", err))
 				fmt.Println("Error:", err)
 				os.Exit(1)
 			}
+			ph = h
 			fmt.Println("Created project at", abs)
 			return
 		case "open":
@@ -77,6 +82,7 @@ func main() {
 				fmt.Println("Error:", err)
 				os.Exit(1)
 			}
+			ph = h
 			fmt.Printf("Opened project: %s\n", h.Project.Name)
 			fmt.Printf("Issues: %d\n", len(h.Project.Issues))
 			fmt.Println("Root:", h.Root)
@@ -96,6 +102,7 @@ func main() {
 				fmt.Println("Error:", err)
 				os.Exit(1)
 			}
+			ph = h
 			// Touch metadata to ensure changed content for demo purposes
 			h.Project.Metadata.Notes = fmt.Sprintf("Saved at %s", time.Now().Format(time.RFC3339))
 			if err := storage.Save(h); err != nil {

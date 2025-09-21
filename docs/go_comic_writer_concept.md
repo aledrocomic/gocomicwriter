@@ -130,7 +130,7 @@ Implementation details:
 - [x] Initialize Go modules and workspace layout.
 - [x] Define domain models and JSON schema for comic.json.
 - [x] Implement slog logging with custom handler.
-- [ ] Implement logging, error reporting, and crash-safe autosave.
+- [x] Implement logging, error reporting, and crash-safe autosave.
 - [x] Implement file I/O: create/open/save project; transactional writes; backups.
 - [ ] Implement basic UI shell with canvas editor.
 - [ ] Implement basic storage layer with JSON manifest.
