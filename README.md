@@ -31,15 +31,16 @@ Go Comic Writer is an in‑progress toolchain for comic writing and lettering. I
 The long‑term plan is a desktop application with a canvas editor and exporters (PDF/PNG/SVG/CBZ). See the concept document for details.
 
 ## Current features (alpha)
-- Minimal CLI with a version command.
-- Versioned module structure for future expansion.
-- Domain model types aligned with the planned data model (internal/domain).
-- Public JSON schema for the project manifest at docs/comic.schema.json.
-- Docs for setting up CI/CD and release automation.
+- CLI commands: version, init, open, save.
+- Transactional project storage with a human‑readable manifest (comic.json) and timestamped backups under backups/.
+- Crash safety: on panic, write a crash report and autosave snapshot; on open, fall back to the latest valid backup if the manifest is unreadable.
+- Structured logging via Go's slog with simple env configuration; optional rotating file via GCW_LOG_FILE.
+- Core domain model in internal/domain and a public JSON schema at docs/comic.schema.json.
+- Sample project manifest at tmp_proj/comic.json (with backups under tmp_proj/backups/).
+- Unit tests for core packages (storage, logging, crash, version, schema).
 
 What’s not here yet:
 - Rendering/lettering engine and UI.
-- Real project load/save flows.
 - Exporters (PDF/PNG/SVG/CBZ).
 
 ## Install and quick start
@@ -73,13 +74,44 @@ Version: 0.0.0-dev
 ```
 
 ## Usage
-The current CLI only supports printing its version:
+Current CLI commands:
 
-```bash
-gocomicwriter -v
+```
+gocomicwriter version | -v | --version   Show version
+gocomicwriter init <dir> <name>           Create a new project at <dir> with name <name>
+gocomicwriter open <dir>                  Open project at <dir> and print summary
+gocomicwriter save <dir>                  Save project at <dir> (creates backup)
 ```
 
-Future commands will handle project creation, validation, rendering, and export.
+Examples:
+- Build locally, then run (PowerShell):
+  - .\bin\gocomicwriter.exe -v
+  - .\bin\gocomicwriter.exe init .\tmp_proj "My Series"
+  - .\bin\gocomicwriter.exe open .\tmp_proj
+  - .\bin\gocomicwriter.exe save .\tmp_proj
+- Or if installed into PATH: gocomicwriter -v
+
+Notes:
+- init scaffolds standard subfolders (script, pages, assets, styles, exports, backups) and writes comic.json.
+- save writes comic.json transactionally and copies the previous manifest into backups/comic.json.YYYYMMDD-HHMMSS.bak.
+- open attempts to read comic.json; if it fails, it falls back to the latest backup.
+
+## Logging configuration
+The CLI uses structured logging (slog). Configure via environment variables:
+- GCW_LOG_LEVEL=debug|info|warn|error (default: info)
+- GCW_LOG_FORMAT=console|json (default: console)
+- GCW_LOG_SOURCE=true|false (default: false)
+- GCW_LOG_FILE=<path> (optional; enables rotating JSON file logs)
+
+Examples:
+- PowerShell: `$env:GCW_LOG_LEVEL='debug'; .\bin\gocomicwriter.exe open .\tmp_proj`
+- Bash: `GCW_LOG_FORMAT=json GCW_LOG_FILE=gcw.log gocomicwriter open tmp_proj`
+
+## Crash reports and autosave
+On an unexpected crash (panic), the app will:
+- write a crash report file named `crash-YYYYMMDD-HHMMSS.log` under `<project>\backups` (or the system temp dir if no project is open),
+- write an autosave snapshot of the manifest as `backups/comic.json.crash-YYYYMMDD-HHMMSS.autosave`,
+- exit with a non-zero status code.
 
 ## Project manifest (comic.json) and schema
 The project’s canonical manifest is intended to be a readable JSON file, usually named comic.json. A formal schema is provided to aid validation and tooling:
@@ -122,12 +154,13 @@ A sample work‑in‑progress manifest lives at tmp_proj/comic.json (with automa
 ## Repository layout
 - cmd/gocomicwriter — CLI entrypoint
 - internal/domain — core data model types (Project, Issue, Page, Panel, Balloon, etc.)
+- internal/storage — project I/O (init/open/save), backups, autosave snapshot
+- internal/crash — panic recovery and crash reports
+- internal/log — slog setup, env options, optional rotating file handler
 - internal/version — version string helper
 - docs/go_comic_writer_concept.md — product concept, pillars, and milestones
 - docs/comic.schema.json — JSON schema for comic.json
-- docs/ci-cd-aws.md — guide to CI, releases, and optional AWS artifact hosting
-- .github/workflows/ci.yml — CI checks on pushes/PRs (build/vet/module hygiene)
-- .github/workflows/release.yml — release builds on tags (cross‑platform binaries)
+- .github/workflows/go.yml — CI checks (build, vet, test)
 - tmp_proj/ — scratch space for local experiments and sample files
 
 ## Roadmap and concept
@@ -141,15 +174,8 @@ Highlights:
 - Deterministic exporters: PDF, PNG/SVG, CBZ
 
 ## CI/CD and releases
-This repo includes GitHub Actions workflows for CI and releases, along with an AWS‑friendly guide if you want to mirror artifacts to S3 using OIDC:
-- CI workflow: .github/workflows/ci.yml
-- Release workflow: .github/workflows/release.yml
-- Setup guide: docs/ci-cd-aws.md
-
-How releases will work (when the project reaches usable milestones):
-- Create a tag like v0.1.0
-- CI builds cross‑platform artifacts and attaches them to the GitHub Release
-- Optionally mirror artifacts to S3 (see the AWS guide)
+- CI: .github/workflows/go.yml runs build, vet, and tests on pushes/PRs.
+- Releases: not configured yet; will be added once usable milestones are reached.
 
 ## Contributing and conduct
 Contributions are welcome once core foundations stabilize. Until then, feel free to:

@@ -104,22 +104,33 @@ Empower writers and comic teams to go from script to lettered pages in one strea
 - Asset: type (font, image, ref), path, license metadata.
 
 ## Logging
-Based on the concept and roadmap (offline-first, cross‑platform, structured JSON manifest, future crash-safe autosave, optional telemetry), 
-the project will use the following logging solution:
+Based on the concept and roadmap (offline-first, cross‑platform, structured JSON manifest, crash-safe autosave, optional telemetry), the project uses slog with a small wrapper for consistency and configuration.
 
 - Primary: slog (log/slog in stdlib) with a custom handler
-    - Reasons: standard API, structured fields, levels, easy context propagation across modules (storage, exporters, rendering), stable long-term.
-    - Pair it with:
-        - lumberjack for file rotation
-        - an optional console text handler for dev, JSON for prod
-        - a minimal wrapper package (internal/log) to centralize config and fields like project path, page/panel IDs.
+  - Reasons: standard API, structured fields, levels, easy context propagation across modules (storage, exporters, rendering), stable long-term.
+  - Paired with:
+    - lumberjack for file rotation (optional)
+    - a pretty console text handler for development, JSON for machine consumption
+    - a minimal wrapper package (internal/log) to centralize config and fields like component/op
 
 Implementation details:
-- Start with slog to avoid vendor lock-in and keep dependencies small.
-- Emit structured logs with consistent keys (component, operation, project, issue, page, panel, asset, path).
-- Use levels: DEBUG for geometry/layout details, INFO for user actions and exports, WARN for recoverable validation issues, ERROR for failed I/O or rendering.
-- Rotation: lumberjack; one log per project directory plus a global application log.
-- Later: add a crash-report hook to capture last N lines (ring buffer) for autosave/recovery.
+- Emit structured logs with consistent keys (component, op, project, issue, page, panel, asset, path).
+- Levels: DEBUG for geometry/layout details, INFO for user actions and exports, WARN for recoverable validation issues, ERROR for failed I/O or rendering.
+- Rotation: lumberjack; optional file logging controlled by env var.
+- Crash hook handled in internal/crash (see below).
+
+Current implementation (Phase 0):
+- internal/log initializes slog and enriches records with app/version/time.
+- Environment configuration:
+  - GCW_LOG_LEVEL=debug|info|warn|error (default: info)
+  - GCW_LOG_FORMAT=console|json (default: console)
+  - GCW_LOG_SOURCE=true|false (default: false)
+  - GCW_LOG_FILE=<path> (optional; enables rotating JSON file logs)
+
+Crash handling and autosave (implemented):
+- internal/crash.Recover captures panics, logs a stack trace, and writes a crash report file named crash-YYYYMMDD-HHMMSS.log to <project>/backups (or system temp if no project).
+- storage.AutosaveCrashSnapshot writes backups/comic.json.crash-YYYYMMDD-HHMMSS.autosave without touching the main manifest, aiding recovery.
+- The CLI exits with a non-zero status on crash.
 
 
 ## Testing Concept and Strategy
@@ -190,13 +201,14 @@ Alignment with Definition of Done:
 ## Milestones and Task List
 
 ### Phase 0 — Foundation
-- [x] Initialize Go modules and workspace layout.
-- [x] Define domain models and JSON schema for comic.json.
-- [x] Implement slog logging with custom handler.
-- [x] Implement logging, error reporting, and crash-safe autosave.
-- [x] Implement file I/O: create/open/save project; transactional writes; backups.
+- [✓] Initialize Go modules and workspace layout.
+- [✓] Define domain models and JSON schema for comic.json.
+- [✓] Implement slog logging with custom handler.
+- [✓] Implement logging, error reporting, and crash-safe autosave.
+- [✓] Implement file I/O: create/open/save project; transactional writes; backups.
+- [✓] Implement fist tests to start etsting early.
 - [ ] Implement basic UI shell with canvas editor.
-- [ ] Implement basic storage layer with JSON manifest.
+- [✓] Implement basic storage layer with JSON manifest.
 
 ### Phase 1 — Core Rendering & Geometry
 - [ ] Build vector primitives and text layout abstraction.
