@@ -132,6 +132,14 @@ Notes and controls:
 Troubleshooting:
 - Linux may require OpenGL drivers and a working X11/Wayland setup. On headless CI this UI is not built by default.
 - If you see "UI not built in this binary", rebuild with `-tags fyne`.
+- If you see a build error like: `imports github.com/go-gl/gl/v2.1/gl: build constraints exclude all Go files`, it means cgo is disabled and the OpenGL backend cannot compile.
+  - On Windows, install a C toolchain (MSYS2/MinGW-w64) so gcc is available, then enable cgo:
+    - Start an MSYS2 MinGW64 shell or ensure `gcc` is on PATH in PowerShell.
+    - PowerShell: `setx CGO_ENABLED 1` (or for the current session: `$env:CGO_ENABLED='1'`)
+    - Then: `go run -tags fyne ./cmd/gocomicwriter ui .\tmp_proj`
+  - On macOS: Xcode Command Line Tools are usually sufficient. Ensure `CGO_ENABLED=1`.
+  - On Linux: install build-essential (Debian/Ubuntu) or base-devel (Arch), ensure `CGO_ENABLED=1`.
+- If cgo is still disabled, the binary will fall back to a helpful stub error when running the `ui` command with `-tags fyne`.
 
 Notes:
 - init scaffolds standard subfolders (script, pages, assets, styles, exports, backups) and writes comic.json.
