@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"path/filepath"
 
+	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
@@ -53,9 +54,6 @@ func Run(projectDir string) error {
 				return
 			}
 			abs := uri.Path()
-			if !uri.IsDirectory() {
-				abs = filepath.Dir(abs)
-			}
 			if err := openProject(abs, &ph, w, l, status); err != nil {
 				l.Error("open project failed", slog.Any("err", err))
 				dialog.ShowError(err, w)
@@ -156,17 +154,15 @@ func (p *PageCanvas) DragEnd() {}
 
 // Scroll changes zoom when Ctrl pressed, else pans vertically.
 func (p *PageCanvas) Scrolled(e *fyne.ScrollEvent) {
-	if e.Modifiers&fyne.KeyModifierControl > 0 {
-		step := float32(e.Scrolled.DY) * 0.05
-		p.zoom += step
-		if p.zoom < 0.1 {
-			p.zoom = 0.1
-		}
-		if p.zoom > 4.0 {
-			p.zoom = 4.0
-		}
-	} else {
-		p.offsetY += float32(e.Scrolled.DY) * 10
+	// Fyne v2.6 does not expose modifier keys on ScrollEvent; keep it simple and
+	// always use the wheel to zoom. This keeps the demo usable across platforms.
+	step := float32(e.Scrolled.DY) * 0.05
+	p.zoom += step
+	if p.zoom < 0.1 {
+		p.zoom = 0.1
+	}
+	if p.zoom > 4.0 {
+		p.zoom = 4.0
 	}
 	p.Refresh()
 }
