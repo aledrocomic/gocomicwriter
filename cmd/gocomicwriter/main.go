@@ -19,6 +19,7 @@ import (
 	"gocomicwriter/internal/domain"
 	applog "gocomicwriter/internal/log"
 	"gocomicwriter/internal/storage"
+	"gocomicwriter/internal/ui"
 	"gocomicwriter/internal/version"
 )
 
@@ -31,6 +32,7 @@ func usage() {
 	fmt.Println("  gocomicwriter init <dir> <name>            Create a new project at <dir> with name <name>")
 	fmt.Println("  gocomicwriter open <dir>                    Open project at <dir> and print summary")
 	fmt.Println("  gocomicwriter save <dir>                    Save project at <dir> (creates backup) ")
+	fmt.Println("  gocomicwriter ui [<dir>]                    Launch desktop UI (build with -tags fyne for full UI)")
 }
 
 func main() {
@@ -112,6 +114,16 @@ func main() {
 				os.Exit(1)
 			}
 			fmt.Println("Saved project and created a backup of previous manifest (if any).")
+			return
+		case "ui":
+			var dir string
+			if len(args) >= 3 {
+				dir = args[2]
+			}
+			if err := ui.Run(dir); err != nil {
+				fmt.Println("Error:", err)
+				os.Exit(1)
+			}
 			return
 		}
 	}
