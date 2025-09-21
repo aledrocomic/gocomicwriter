@@ -129,9 +129,9 @@ Implementation details:
 ### Phase 0 — Foundation
 - [x] Initialize Go modules and workspace layout.
 - [x] Define domain models and JSON schema for comic.json.
-- [ ] Implement slog logging with custom handler.
+- [x] Implement slog logging with custom handler.
 - [ ] Implement logging, error reporting, and crash-safe autosave.
-- [ ] Implement file I/O: create/open/save project; transactional writes; backups.
+- [x] Implement file I/O: create/open/save project; transactional writes; backups.
 - [ ] Implement basic UI shell with canvas editor.
 - [ ] Implement basic storage layer with JSON manifest.
 

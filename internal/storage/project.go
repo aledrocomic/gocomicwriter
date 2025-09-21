@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"gocomic/internal/domain"
+	applog "gocomic/internal/log"
+	"log/slog"
 )
 
 const (
@@ -51,16 +53,19 @@ type ProjectHandle struct {
 // InitProject creates a new project directory at root (creating it if it doesn't exist),
 // scaffolds the standard subfolders, and writes the given manifest file transactionally.
 func InitProject(root string, proj domain.Project) (*ProjectHandle, error) {
+	l := applog.WithOperation(applog.WithComponent("storage"), "init").With(slog.String("root", root))
 	if strings.TrimSpace(root) == "" {
 		return nil, errors.New("root path is required")
 	}
 	// Ensure directory exists
 	if err := os.MkdirAll(root, 0o755); err != nil {
+		l.Error("create project root failed", slog.Any("err", err))
 		return nil, fmt.Errorf("create project root: %w", err)
 	}
 	// Create standard subfolders
 	for _, d := range standardSubDirs {
 		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			l.Error("create subdir failed", slog.String("dir", d), slog.Any("err", err))
 			return nil, fmt.Errorf("create subdir %s: %w", d, err)
 		}
 	}
@@ -71,47 +76,59 @@ func InitProject(root string, proj domain.Project) (*ProjectHandle, error) {
 		Project:      proj,
 	}
 	if err := Save(ph); err != nil {
+		l.Error("initial save failed", slog.Any("err", err))
 		return nil, err
 	}
+	l.Info("project created", slog.String("manifest", ph.ManifestPath))
 	return ph, nil
 }
 
 // Open loads an existing project from the given root directory.
 // If the current manifest cannot be read or parsed, it will attempt last backup.
 func Open(root string) (*ProjectHandle, error) {
+	l := applog.WithOperation(applog.WithComponent("storage"), "open").With(slog.String("root", root))
 	mpath := filepath.Join(root, ManifestFileName)
 	b, err := os.ReadFile(mpath)
 	if err != nil {
-		// try backup
+		l.Warn("open manifest failed, trying backup", slog.Any("err", err))
 		proj, berr := openFromLatestBackup(root)
 		if berr != nil {
+			l.Error("backup open failed", slog.Any("err", berr))
 			return nil, fmt.Errorf("open manifest: %w; backup attempt: %v", err, berr)
 		}
+		l.Info("opened from backup", slog.String("manifest", mpath))
 		return &ProjectHandle{Root: root, ManifestPath: mpath, Project: *proj}, nil
 	}
 	var p domain.Project
 	if uerr := json.Unmarshal(b, &p); uerr != nil {
+		l.Warn("parse manifest failed, trying backup", slog.Any("err", uerr))
 		proj, berr := openFromLatestBackup(root)
 		if berr != nil {
+			l.Error("backup open failed", slog.Any("err", berr))
 			return nil, fmt.Errorf("parse manifest: %w; backup attempt: %v", uerr, berr)
 		}
+		l.Info("opened from backup", slog.String("manifest", mpath))
 		return &ProjectHandle{Root: root, ManifestPath: mpath, Project: *proj}, nil
 	}
+	l.Info("project opened", slog.String("manifest", mpath), slog.String("name", p.Name))
 	return &ProjectHandle{Root: root, ManifestPath: mpath, Project: p}, nil
 }
 
 // Save writes the current ProjectHandle.Project to disk with transactional semantics
 // and a timestamped backup of the previous manifest (if present).
 func Save(ph *ProjectHandle) error {
+	l := applog.WithOperation(applog.WithComponent("storage"), "save")
 	if ph == nil {
 		return errors.New("nil ProjectHandle")
 	}
 	if ph.Root == "" || ph.ManifestPath == "" {
 		return errors.New("invalid ProjectHandle: missing paths")
 	}
+	l.Info("saving manifest", slog.String("path", ph.ManifestPath))
 	// Marshal in human-readable form
 	data, err := json.MarshalIndent(ph.Project, "", "  ")
 	if err != nil {
+		l.Error("marshal manifest failed", slog.Any("err", err))
 		return fmt.Errorf("marshal manifest: %w", err)
 	}
 	data = append(data, '\n')
@@ -119,6 +136,7 @@ func Save(ph *ProjectHandle) error {
 	// Ensure backups dir exists
 	bdir := filepath.Join(ph.Root, BackupsDirName)
 	if err := os.MkdirAll(bdir, 0o755); err != nil {
+		l.Error("ensure backups dir failed", slog.Any("err", err))
 		return fmt.Errorf("ensure backups dir: %w", err)
 	}
 
@@ -127,7 +145,9 @@ func Save(ph *ProjectHandle) error {
 		stamp := time.Now().Format("20060102-150405")
 		bname := fmt.Sprintf("%s.%s.bak", ManifestFileName, stamp)
 		bpath := filepath.Join(bdir, bname)
+		l.Debug("backup current manifest", slog.String("backup", bpath))
 		if cerr := copyFile(ph.ManifestPath, bpath); cerr != nil {
+			l.Error("backup current manifest failed", slog.Any("err", cerr))
 			return fmt.Errorf("backup current manifest: %w", cerr)
 		}
 	}
@@ -136,6 +156,7 @@ func Save(ph *ProjectHandle) error {
 	dir := filepath.Dir(ph.ManifestPath)
 	temp := filepath.Join(dir, fmt.Sprintf(".%s.tmp-%d-%d", ManifestFileName, os.Getpid(), rand.Int()))
 	if werr := writeFileSync(temp, data); werr != nil {
+		l.Error("write temp manifest failed", slog.Any("err", werr))
 		return fmt.Errorf("write temp manifest: %w", werr)
 	}
 	// On Windows, replace by removing destination first if needed
@@ -145,30 +166,41 @@ func Save(ph *ProjectHandle) error {
 	if rerr := os.Rename(temp, ph.ManifestPath); rerr != nil {
 		// attempt cleanup temp
 		_ = os.Remove(temp)
+		l.Error("replace manifest failed", slog.Any("err", rerr))
 		return fmt.Errorf("replace manifest: %w", rerr)
 	}
+	l.Info("manifest saved", slog.String("path", ph.ManifestPath))
 	return nil
 }
 
 // SaveAs writes the manifest to a new root folder, scaffolding structure if needed, and updates the handle.
 func SaveAs(ph *ProjectHandle, newRoot string) error {
+	l := applog.WithOperation(applog.WithComponent("storage"), "saveas").With(slog.String("newRoot", newRoot))
 	if ph == nil {
 		return errors.New("nil ProjectHandle")
 	}
 	if newRoot == "" {
 		return errors.New("new root is empty")
 	}
+	l.Info("save as starting")
 	if err := os.MkdirAll(newRoot, 0o755); err != nil {
+		l.Error("create new root failed", slog.Any("err", err))
 		return fmt.Errorf("create new root: %w", err)
 	}
 	for _, d := range standardSubDirs {
 		if err := os.MkdirAll(filepath.Join(newRoot, d), 0o755); err != nil {
+			l.Error("create subdir failed", slog.String("dir", d), slog.Any("err", err))
 			return fmt.Errorf("create subdir %s: %w", d, err)
 		}
 	}
 	ph.Root = newRoot
 	ph.ManifestPath = filepath.Join(newRoot, ManifestFileName)
-	return Save(ph)
+	if err := Save(ph); err != nil {
+		l.Error("save as failed", slog.Any("err", err))
+		return err
+	}
+	l.Info("save as completed", slog.String("manifest", ph.ManifestPath))
+	return nil
 }
 
 // writeFileSync writes data to a file, ensures it is flushed to disk.

@@ -10,11 +10,13 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
 
 	"gocomic/internal/domain"
+	applog "gocomic/internal/log"
 	"gocomic/internal/storage"
 	"gocomic/internal/version"
 )
@@ -31,7 +33,12 @@ func usage() {
 }
 
 func main() {
+	// initialize structured logging using environment defaults
+	applog.Init(applog.FromEnv())
+	l := applog.WithComponent("cli")
+
 	args := os.Args
+	l.Debug("start", slog.Int("args", len(args)))
 	if len(args) > 1 {
 		switch args[1] {
 		case "version", "--version", "-v":
@@ -46,8 +53,10 @@ func main() {
 			dir := args[2]
 			name := args[3]
 			abs, _ := filepath.Abs(dir)
+			l.Info("init project", slog.String("root", abs), slog.String("name", name))
 			p := domain.Project{Name: name, Issues: []domain.Issue{}}
 			if _, err := storage.InitProject(abs, p); err != nil {
+				l.Error("init failed", slog.Any("err", err))
 				fmt.Println("Error:", err)
 				os.Exit(1)
 			}
@@ -61,8 +70,10 @@ func main() {
 			}
 			dir := args[2]
 			abs, _ := filepath.Abs(dir)
+			l.Info("open project", slog.String("root", abs))
 			h, err := storage.Open(abs)
 			if err != nil {
+				l.Error("open failed", slog.Any("err", err))
 				fmt.Println("Error:", err)
 				os.Exit(1)
 			}
@@ -78,14 +89,17 @@ func main() {
 			}
 			dir := args[2]
 			abs, _ := filepath.Abs(dir)
+			l.Info("save project", slog.String("root", abs))
 			h, err := storage.Open(abs)
 			if err != nil {
+				l.Error("open before save failed", slog.Any("err", err))
 				fmt.Println("Error:", err)
 				os.Exit(1)
 			}
 			// Touch metadata to ensure changed content for demo purposes
 			h.Project.Metadata.Notes = fmt.Sprintf("Saved at %s", time.Now().Format(time.RFC3339))
 			if err := storage.Save(h); err != nil {
+				l.Error("save failed", slog.Any("err", err))
 				fmt.Println("Error:", err)
 				os.Exit(1)
 			}
