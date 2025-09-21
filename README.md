@@ -5,7 +5,7 @@ A Go-powered project aiming to become a writing, planning, and lettering toolcha
 This repository currently provides a development skeleton: a minimal CLI, an evolving domain model, and a public JSON schema for the project manifest. The product concept and roadmap live in docs/go_comic_writer_concept.md.
 
 - Vision: Empower comic creators to go from script to lettered pages in one streamlined, offline‑first tool.
-- Status: Early stage (0.1.0‑dev). Not production‑ready.
+- Status: Early stage (0.1.2‑dev). Not production‑ready.
 - License: Apache 2.0
 
 ## Contents
@@ -71,7 +71,7 @@ Expected output resembles:
 
 ```
 Go Comic Writer — development skeleton
-Version: 0.1.0-dev
+Version: 0.1.2-dev
 ```
 
 ## Usage
