@@ -122,6 +122,69 @@ Implementation details:
 - Later: add a crash-report hook to capture last N lines (ring buffer) for autosave/recovery.
 
 
+## Testing Concept and Strategy
+
+Goals:
+- Ensure determinism (same inputs → same outputs) across platforms for storage, rendering, and exports.
+- Catch regressions early with fast unit tests and targeted golden tests.
+- Validate data integrity of the project manifest (comic.json) and safe I/O (backups, autosave, crash recovery).
+- Provide confidence to refactor core geometry/text layout and exporters.
+
+### Test Layers
+1) Unit tests (Go testing) — fast, isolated
+- internal/domain: model invariants (IDs, ordering, geometry bounds), JSON tags and defaults.
+- internal/storage: load/save round-trips, versioning, migrations; atomic writes; backup/restore behavior.
+- internal/log: configuration, level filtering, and structured fields presence.
+- internal/crash: panic capture, file breadcrumbs, and autosave hooks (using temp dirs).
+
+2) Schema validation
+- Validate comic.json against docs/comic.schema.json in tests using a JSON Schema validator.
+- Round-trip tests: marshal domain types → JSON → validate → unmarshal; ensure equality or compatible normalization.
+
+3) Property and fuzz tests (where high value)
+- Geometry operations (panels, balloons, hit testing) with randomized inputs to surface edge cases.
+- Text segmentation/shaping boundaries with fuzzed strings (Unicode, RTL markers, emoji, ZWJ sequences) once the text stack lands.
+
+4) Golden tests (deterministic outputs)
+- Exporters: compare PDF/PNG/SVG bytes or normalized representations against versioned golden files.
+- Rendering/layout: store small canonical scenes (few panels, balloons) and assert bounding boxes, line breaks, and z-ordering.
+- Use testdata/golden under each package; include tools to re-generate goldens with explicit env var (e.g., UPDATE_GOLDEN=1).
+
+5) Integration flows
+- CLI smoke tests (cmd/gocomic): create project → add minimal data → save/export; assert files exist and validate against schema.
+- Migration tests: open older manifest versions and verify automatic upgrade produces expected new-version JSON.
+- Crash/Recovery: simulate a panic during save and assert journal/backup allows lossless recovery.
+
+6) Performance and stability
+- Benchmarks (go test -bench) for serialization, layout passes, and export of a mid-size page.
+- Memory and CPU budgets tracked per milestone; add benches to Phase 9 checklist.
+
+### Cross-Platform Determinism
+- Normalize floating point precision in stored JSON (fixed decimals) to avoid drift.
+- Use a single shaping/layout engine for text; test identical inputs across OS via golden assets.
+- Font-dependent tests pin to test fonts committed in testdata/fonts with clear licenses.
+
+### Test Data Organization
+- Per-package testdata/ folders with:
+  - projects/ (tiny sample manifests),
+  - scenes/ (JSON describing panels/balloons),
+  - fonts/ (test-only fonts),
+  - golden/ (expected exporter outputs),
+  - migrations/ (older manifest snapshots).
+
+### CI and Quality Gates
+- Run unit + schema + fast golden tests on every commit; heavy exporter goldens can be nightly.
+- Static analysis: go vet and staticcheck; lint commit messages for migration/version bumps.
+- Coverage targets: Phase 0–2 ≥60% core packages; Phase 3–5 ≥80% for domain/storage/exporters (UI excluded).
+
+### Manual and Exploratory Testing (UI)
+- While the desktop UI is built, maintain lightweight manual test scripts per feature (tools, snapping, text editing).
+- Screenshot-based comparison can be introduced later for the canvas (pixel or vector structure diffs).
+
+Alignment with Definition of Done:
+- Each feature merges with unit tests for models/storage/exporters and, when applicable, goldens or schema checks.
+- Add/update a manual UI checklist until automated UI coverage exists.
+
 ---
 
 ## Milestones and Task List
