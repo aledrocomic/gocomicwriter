@@ -15,11 +15,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"gocomic/internal/crash"
-	"gocomic/internal/domain"
-	applog "gocomic/internal/log"
-	"gocomic/internal/storage"
-	"gocomic/internal/version"
+	"gocomicwriter/internal/crash"
+	"gocomicwriter/internal/domain"
+	applog "gocomicwriter/internal/log"
+	"gocomicwriter/internal/storage"
+	"gocomicwriter/internal/version"
 )
 
 func usage() {
@@ -27,10 +27,10 @@ func usage() {
 	fmt.Printf("Version: %s\n", version.String())
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  gocomic version|-v|--version        Show version")
-	fmt.Println("  gocomic init <dir> <name>            Create a new project at <dir> with name <name>")
-	fmt.Println("  gocomic open <dir>                    Open project at <dir> and print summary")
-	fmt.Println("  gocomic save <dir>                    Save project at <dir> (creates backup) ")
+	fmt.Println("  gocomicwriter version|-v|--version        Show version")
+	fmt.Println("  gocomicwriter init <dir> <name>            Create a new project at <dir> with name <name>")
+	fmt.Println("  gocomicwriter open <dir>                    Open project at <dir> and print summary")
+	fmt.Println("  gocomicwriter save <dir>                    Save project at <dir> (creates backup) ")
 }
 
 func main() {

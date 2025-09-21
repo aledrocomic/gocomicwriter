@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"gocomic/internal/version"
+	"gocomicwriter/internal/version"
 
 	// lumberjack is optional; used only if file logging is enabled
 	lj "gopkg.in/natefinch/lumberjack.v2"
@@ -102,7 +102,7 @@ func Init(opts Options) {
 	logger := slog.New(h)
 	// Attach static attrs
 	logger = logger.With(
-		slog.String("app", "gocomic"),
+		slog.String("app", "gocomicwriter"),
 		slog.String("ver", version.Version),
 		slog.Time("ts_init", time.Now()),
 	)

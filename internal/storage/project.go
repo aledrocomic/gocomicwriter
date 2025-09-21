@@ -20,8 +20,8 @@ import (
 	"strings"
 	"time"
 
-	"gocomic/internal/domain"
-	applog "gocomic/internal/log"
+	"gocomicwriter/internal/domain"
+	applog "gocomicwriter/internal/log"
 	"log/slog"
 )
 
