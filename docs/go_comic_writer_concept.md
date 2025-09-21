@@ -103,6 +103,25 @@ Empower writers and comic teams to go from script to lettered pages in one strea
 - Style: fonts, colors, stroke, fill, effects.
 - Asset: type (font, image, ref), path, license metadata.
 
+## Logging
+Based on the concept and roadmap (offline-first, cross‑platform, structured JSON manifest, future crash-safe autosave, optional telemetry), 
+the project will use the following logging solution:
+
+- Primary: slog (log/slog in stdlib) with a custom handler
+    - Reasons: standard API, structured fields, levels, easy context propagation across modules (storage, exporters, rendering), stable long-term.
+    - Pair it with:
+        - lumberjack for file rotation
+        - an optional console text handler for dev, JSON for prod
+        - a minimal wrapper package (internal/log) to centralize config and fields like project path, page/panel IDs.
+
+Implementation details:
+- Start with slog to avoid vendor lock-in and keep dependencies small.
+- Emit structured logs with consistent keys (component, operation, project, issue, page, panel, asset, path).
+- Use levels: DEBUG for geometry/layout details, INFO for user actions and exports, WARN for recoverable validation issues, ERROR for failed I/O or rendering.
+- Rotation: lumberjack; one log per project directory plus a global application log.
+- Later: add a crash-report hook to capture last N lines (ring buffer) for autosave/recovery.
+
+
 ---
 
 ## Milestones and Task List
@@ -110,8 +129,11 @@ Empower writers and comic teams to go from script to lettered pages in one strea
 ### Phase 0 — Foundation
 - [x] Initialize Go modules and workspace layout.
 - [x] Define domain models and JSON schema for comic.json.
-- [ ] Implement file I/O: create/open/save project; transactional writes; backups.
-- [ ] Implement logging, error reporting, and crash-safe autosave.
+- [x] Implement slog logging with custom handler.
+- [x] Implement logging, error reporting, and crash-safe autosave.
+- [x] Implement file I/O: create/open/save project; transactional writes; backups.
+- [ ] Implement basic UI shell with canvas editor.
+- [ ] Implement basic storage layer with JSON manifest.
 
 ### Phase 1 — Core Rendering & Geometry
 - [ ] Build vector primitives and text layout abstraction.
