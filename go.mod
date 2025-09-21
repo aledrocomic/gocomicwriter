@@ -1,4 +1,4 @@
-module gocomic
+module gocomicwriter
 
 go 1.23
 

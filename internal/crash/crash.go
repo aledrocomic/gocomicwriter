@@ -18,9 +18,9 @@ import (
 	"runtime/debug"
 	"time"
 
-	applog "gocomic/internal/log"
-	"gocomic/internal/storage"
-	"gocomic/internal/version"
+	applog "gocomicwriter/internal/log"
+	"gocomicwriter/internal/storage"
+	"gocomicwriter/internal/version"
 )
 
 // Recover captures a panic, logs an error with stacktrace,

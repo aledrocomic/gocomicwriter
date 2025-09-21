@@ -1,4 +1,4 @@
-# Go Comic Writer (gocomic)
+# Go Comic Writer (gocomicwriter)
 
 A Go-powered project aiming to become a writing, planning, and lettering toolchain for comics — from script to precisely lettered pages — with reliable exports for print and screen.
 
@@ -51,18 +51,18 @@ Install the CLI from source:
 
 ```bash
 # From within a clone of this repository
-go build -o bin/gocomic ./cmd/gocomic
+go build -o bin/gocomicwriter ./cmd/gocomicwriter
 
 # Or install into your GOPATH/bin (adjust module path if needed)
-go install ./cmd/gocomic
+go install ./cmd/gocomicwriter
 ```
 
 Verify it runs:
 
 ```bash
-bin/gocomic
-bin/gocomic -v
-bin/gocomic --version
+bin/gocomicwriter
+bin/gocomicwriter -v
+bin/gocomicwriter --version
 ```
 
 Expected output resembles:
@@ -76,7 +76,7 @@ Version: 0.0.0-dev
 The current CLI only supports printing its version:
 
 ```bash
-gocomic -v
+gocomicwriter -v
 ```
 
 Future commands will handle project creation, validation, rendering, and export.
@@ -120,7 +120,7 @@ Note: The schema defines richer structures for pages, panels, balloons, styles, 
 A sample work‑in‑progress manifest lives at tmp_proj/comic.json (with automatic timestamped backups under tmp_proj/backups/).
 
 ## Repository layout
-- cmd/gocomic — CLI entrypoint
+- cmd/gocomicwriter — CLI entrypoint
 - internal/domain — core data model types (Project, Issue, Page, Panel, Balloon, etc.)
 - internal/version — version string helper
 - docs/go_comic_writer_concept.md — product concept, pillars, and milestones
