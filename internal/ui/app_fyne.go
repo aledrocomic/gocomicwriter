@@ -1,4 +1,4 @@
-//go:build fyne
+//go:build fyne && cgo
 
 package ui
 

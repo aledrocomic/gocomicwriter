@@ -6,6 +6,12 @@ The format is based on Keep a Changelog (https://keepachangelog.com/en/1.1.0/),
 and this project adheres to Semantic Versioning. This is a pre-release
 (0.x) and APIs may change at any time.
 
+## [0.1.1-dev] - 2025-09-21
+
+### Added
+- Fix for fyne dependencies and cgo dependiencies.
+- Expanded README.md to explain the cgo dependency
+
 ## [0.1.0-dev] - 2025-09-21
 
 ### Added
