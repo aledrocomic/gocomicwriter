@@ -1,4 +1,4 @@
-# Go Comic Writer (gocomic)
+# Go Comic Writer (gocomicwriter)
 
 A Go-powered project aiming to become a writing, planning, and lettering toolchain for comics — from script to precisely lettered pages — with reliable exports for print and screen.
 
