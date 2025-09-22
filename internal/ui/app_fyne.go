@@ -15,7 +15,9 @@ import (
 	"image/color"
 	"log/slog"
 	"math"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -31,6 +33,7 @@ import (
 	"gocomicwriter/internal/script"
 	"gocomicwriter/internal/storage"
 	"gocomicwriter/internal/vector"
+	"gocomicwriter/internal/version"
 )
 
 // Run starts the Fyne-based desktop UI shell with a basic canvas editor placeholder.
@@ -428,6 +431,51 @@ func Run(projectDir string) error {
 	w.SetContent(content)
 
 	// Build menus
+	newItem := fyne.NewMenuItem("New…", func() {
+		// Step 1: choose a folder for the new project
+		fd := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
+			if err != nil {
+				l.Error("new dialog error", slog.Any("err", err))
+				return
+			}
+			if uri == nil {
+				return
+			}
+			abs := uri.Path()
+			// Step 2: prompt for project name
+			nameEntry := widget.NewEntry()
+			nameEntry.SetPlaceHolder("Project Name")
+			form := dialog.NewForm("New Project", "Create", "Cancel", []*widget.FormItem{
+				widget.NewFormItem("Name", nameEntry),
+			}, func(ok bool) {
+				if !ok {
+					return
+				}
+				name := strings.TrimSpace(nameEntry.Text)
+				if name == "" {
+					dialog.ShowInformation("New Project", "Please enter a project name.", w)
+					return
+				}
+				proj := domain.Project{Name: name, Issues: []domain.Issue{}}
+				h, ierr := storage.InitProject(abs, proj)
+				if ierr != nil {
+					l.Error("init project failed", slog.Any("err", ierr))
+					dialog.ShowError(ierr, w)
+					return
+				}
+				ph = h
+				w.SetTitle(fmt.Sprintf("Go Comic Writer — %s", h.Project.Name))
+				status.SetText(fmt.Sprintf("Created project: %s", abs))
+				// Clear any existing script in the editor for a fresh start
+				scriptEntry.SetText("")
+				updateOutline("")
+				refreshBible()
+			}, w)
+			form.Show()
+		}, w)
+		fd.Show()
+	})
+
 	openItem := fyne.NewMenuItem("Open…", func() {
 		fd := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
 			if err != nil {
@@ -474,8 +522,18 @@ func Run(projectDir string) error {
 	})
 	exitItem := fyne.NewMenuItem("Exit", func() { w.Close() })
 
-	fileMenu := fyne.NewMenu("File", openItem, saveItem, fyne.NewMenuItemSeparator(), exitItem)
-	w.SetMainMenu(fyne.NewMainMenu(fileMenu))
+	fileMenu := fyne.NewMenu("File", newItem, openItem, saveItem, fyne.NewMenuItemSeparator(), exitItem)
+
+	aboutItem := fyne.NewMenuItem("About Go Comic Writer", func() {
+		exe, _ := os.Executable()
+		cwd, _ := os.Getwd()
+		info := fmt.Sprintf("Go Comic Writer\nVersion: %s\nOS: %s\nArch: %s\nGo: %s\nExecutable: %s\nWorking Dir: %s",
+			version.String(), runtime.GOOS, runtime.GOARCH, runtime.Version(), exe, cwd)
+		dialog.ShowInformation("Installation Environment", info, w)
+	})
+	aboutMenu := fyne.NewMenu("About", aboutItem)
+
+	w.SetMainMenu(fyne.NewMainMenu(fileMenu, aboutMenu))
 
 	// Try to open a project if provided
 	if projectDir != "" {

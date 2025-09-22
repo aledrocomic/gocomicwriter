@@ -5,6 +5,8 @@ go 1.24.0
 require (
 	fyne.io/fyne/v2 v2.6.3
 	github.com/xeipuuv/gojsonschema v1.2.0
+	golang.org/x/image v0.31.0
+	golang.org/x/mod v0.28.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
@@ -27,6 +29,7 @@ require (
 	github.com/hack-pad/safejs v0.1.1 // indirect
 	github.com/jeandeaual/go-locale v0.0.0-20250612000132-0ef82f21eade // indirect
 	github.com/jsummers/gobmp v0.0.0-20230614200233-a9de23ed2e25 // indirect
+	github.com/kr/text v0.2.0 // indirect
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
 	github.com/nicksnyder/go-i18n/v2 v2.6.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
@@ -37,7 +40,6 @@ require (
 	github.com/xeipuuv/gojsonpointer v0.0.0-20190905194746-02993c407bfb // indirect
 	github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 // indirect
 	github.com/yuin/goldmark v1.7.13 // indirect
-	golang.org/x/image v0.31.0 // indirect
 	golang.org/x/net v0.44.0 // indirect
 	golang.org/x/sys v0.36.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
