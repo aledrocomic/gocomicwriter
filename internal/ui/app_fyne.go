@@ -115,13 +115,29 @@ func openProject(dir string, ph **storage.ProjectHandle, w fyne.Window, l *slog.
 // and simple trim/bleed guides. Supports pan with mouse drag and zoom with Ctrl+wheel.
 type PageCanvas struct {
 	widget.BaseWidget
+	// Interaction
 	zoom    float32
 	offsetX float32
 	offsetY float32
+	// Geometry (logical units at 72dpi defaults)
+	pageW       float32
+	pageH       float32
+	bleedMargin float32
+	trimMargin  float32
+	gutterSize  float32 // inner margin width
+	gutterLeft  bool    // if false, gutter is drawn on the right
 }
 
 func NewPageCanvas() *PageCanvas {
-	pc := &PageCanvas{zoom: 0.5}
+	pc := &PageCanvas{
+		zoom:        0.5,
+		pageW:       595, // A4 portrait width in pt (72dpi)
+		pageH:       842, // A4 portrait height in pt
+		bleedMargin: 18,  // ~0.25in
+		trimMargin:  9,   // ~0.125in
+		gutterSize:  18,  // ~0.25in inner margin
+		gutterLeft:  true,
+	}
 	pc.ExtendBaseWidget(pc)
 	return pc
 }
@@ -144,9 +160,15 @@ func (p *PageCanvas) CreateRenderer() fyne.WidgetRenderer {
 	bleed.StrokeColor = color.RGBA{R: 0, G: 120, B: 255, A: 180}
 	bleed.StrokeWidth = 1
 
-	objs := []fyne.CanvasObject{bg, bleed, trim, page}
+	gutter := canvas.NewRectangle(color.RGBA{R: 0, G: 0, B: 0, A: 0})
+	gutter.StrokeColor = color.RGBA{R: 120, G: 200, B: 0, A: 200}
+	gutter.FillColor = color.RGBA{R: 120, G: 200, B: 0, A: 40}
+	gutter.StrokeWidth = 1
 
-	return &pageCanvasRenderer{pc: p, objects: objs, bg: bg, page: page, trim: trim, bleed: bleed}
+	// Draw order: background, bleed (outside), page base, then guides on top
+	objs := []fyne.CanvasObject{bg, bleed, page, trim, gutter}
+
+	return &pageCanvasRenderer{pc: p, objects: objs, bg: bg, page: page, trim: trim, bleed: bleed, gutter: gutter}
 }
 
 // PreferredSize sets a decent default size for the widget.
@@ -181,6 +203,7 @@ type pageCanvasRenderer struct {
 	objects     []fyne.CanvasObject
 	bg, page    *canvas.Rectangle
 	trim, bleed *canvas.Rectangle
+	gutter      *canvas.Rectangle
 }
 
 func (r *pageCanvasRenderer) Destroy()                     {}
@@ -193,11 +216,12 @@ func (r *pageCanvasRenderer) Layout(size fyne.Size) {
 	r.bg.Resize(size)
 	r.bg.Move(fyne.NewPos(0, 0))
 
-	// Define a logical page size (e.g., A4 portrait in points).
-	logicalW := float32(595)   // A4 width at 72dpi
-	logicalH := float32(842)   // A4 height at 72dpi
-	bleedMargin := float32(18) // 0.25in at 72dpi approx
-	trimMargin := float32(9)   // 0.125in approx
+	// Define logical page and margins from widget configuration.
+	logicalW := r.pc.pageW
+	logicalH := r.pc.pageH
+	bleedMargin := r.pc.bleedMargin
+	trimMargin := r.pc.trimMargin
+	gutterSize := r.pc.gutterSize
 
 	// Apply zoom
 	scaledW := logicalW * r.pc.zoom
@@ -227,6 +251,19 @@ func (r *pageCanvasRenderer) Layout(size fyne.Size) {
 
 	r.bleed.Resize(fyne.NewSize(float32ToFixed(bleedW), float32ToFixed(bleedH)))
 	r.bleed.Move(fyne.NewPos(float32ToFixed(bleedX), float32ToFixed(bleedY)))
+
+	// Gutter guide: inner margin strip on left or right inside the page
+	gW := gutterSize * r.pc.zoom
+	gH := scaledH
+	var gX float32
+	if r.pc.gutterLeft {
+		gX = cx
+	} else {
+		gX = cx + scaledW - gW
+	}
+	gY := cy
+	r.gutter.Resize(fyne.NewSize(float32ToFixed(gW), float32ToFixed(gH)))
+	r.gutter.Move(fyne.NewPos(float32ToFixed(gX), float32ToFixed(gY)))
 }
 
 func float32ToFixed(v float32) float32 { return fyne.NewSize(v, 0).Width }
