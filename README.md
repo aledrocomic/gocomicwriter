@@ -46,7 +46,7 @@ What’s not here yet:
 
 ## Install and quick start
 Prerequisites:
-- Go 1.23 or newer
+- Go 1.24 or newer
 - A supported OS (Windows/macOS/Linux)
 
 Install the CLI from source:
