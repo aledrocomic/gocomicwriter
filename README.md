@@ -5,7 +5,7 @@ A Go-powered project aiming to become a writing, planning, and lettering toolcha
 This repository currently provides a development skeleton: a minimal CLI, an evolving domain model, and a public JSON schema for the project manifest. The product concept and roadmap live in docs/go_comic_writer_concept.md.
 
 - Vision: Empower comic creators to go from script to lettered pages in one streamlined, offline‑first tool.
-- Status: Early stage (0.1.2‑dev). Not production‑ready.
+- Status: Early stage (0.2.0‑dev). Not production‑ready.
 - License: Apache 2.0
 
 ## Contents
@@ -40,6 +40,13 @@ The long‑term plan is a desktop application with a canvas editor and exporters
 - Sample project manifest at tmp_proj/comic.json (with backups under tmp_proj/backups/).
 - Unit tests for core packages (storage, logging, crash, version, schema).
 
+### Implemented in Phase 1 — Core rendering & geometry
+- Vector primitives and transforms with a small scene graph and hit testing (see internal/vector: geometry.go, node.go, path.go, style.go).
+- Text layout abstraction scaffolding (internal/textlayout) to prepare for typography and balloon text.
+- Page canvas with trim/bleed/gutter guides, pan/zoom, and selection in the experimental UI (build with `-tags fyne`).
+- Shapes: rectangles, ellipses, rounded boxes, and paths, with axis-aligned bounds for layout/selection.
+- Selection and transform handles enabling move, scale (corner handles), and rotate (rotation handle).
+
 What’s not here yet:
 - Rendering/lettering engine (beyond the placeholder canvas) and exporters.
 - Exporters (PDF/PNG/SVG/CBZ).
@@ -71,7 +78,7 @@ Expected output resembles:
 
 ```
 Go Comic Writer — development skeleton
-Version: 0.1.2-dev
+Version: 0.2.0-dev
 ```
 
 ## Usage
@@ -202,16 +209,33 @@ Note: The schema defines richer structures for pages, panels, balloons, styles, 
 A sample work‑in‑progress manifest lives at tmp_proj/comic.json (with automatic timestamped backups under tmp_proj/backups/).
 
 ## Repository layout
-- cmd/gocomicwriter — CLI entrypoint
-- internal/domain — core data model types (Project, Issue, Page, Panel, Balloon, etc.)
-- internal/storage — project I/O (init/open/save), backups, autosave snapshot
-- internal/crash — panic recovery and crash reports
-- internal/log — slog setup, env options, optional rotating file handler
-- internal/version — version string helper
-- docs/go_comic_writer_concept.md — product concept, pillars, and milestones
-- docs/comic.schema.json — JSON schema for comic.json
-- .github/workflows/go.yml — CI checks (build, vet, test)
-- tmp_proj/ — scratch space for local experiments and sample files
+Top‑level and key packages:
+- cmd/gocomicwriter — CLI entrypoint and command dispatch. Build with `-tags fyne` to include the desktop UI command.
+- internal/ — core libraries:
+  - domain — core data model types (Project, Issue, Page, Panel, Balloon, etc.); mirrors fields in docs/comic.schema.json.
+  - storage — project I/O (init/open/save), transactional writes, timestamped backups, autosave snapshot; see doc.go and project.go.
+  - log — slog setup and env configuration (GCW_LOG_*), optional rotating file handler.
+  - crash — panic recovery and crash reports written to backups/.
+  - version — version string helper used by CLI.
+  - vector — vector primitives and scene graph used by the editor: geometry.go (Pt/Rect/Affine2D), node.go (Rect/Ellipse/RoundedRect/Path/Group with transforms and hit testing), path.go (path ops), style.go (Fill/Stroke).
+  - textlayout — initial text layout abstractions to support typography and balloons later.
+  - ui — desktop UI shell (experimental):
+    - app_fyne.go — real editor window using Fyne; build tags: `fyne && cgo`.
+    - app_fyne_nocgo.go — helpful fallback when `fyne` is set but `cgo` is disabled.
+    - app_stub.go — stub used when the binary is built without `-tags fyne`.
+- docs/ — concept and schema:
+  - go_comic_writer_concept.md — product concept, pillars, architecture, milestones.
+  - comic.schema.json — JSON schema for comic.json projects.
+- tmp_proj/ — sample project used in README examples; contains comic.json and backups/.
+- bin/ — local build output (e.g., gocomicwriter, gocomicwriter-ui); not published.
+- .github/ — automation:
+  - workflows/go.yml — CI: build, vet, test on pushes/PRs.
+  - dependabot.yml — dependency update configuration.
+- Root files:
+  - README.md, CHANGELOG.md, LICENSE, CODE_OF_CONDUCT.md, go.mod, go.sum.
+
+Tests:
+- Tests are co-located next to their packages in *_test.go files. Run: `go test ./...`
 
 ## Roadmap and concept
 The full product concept, architecture overview, and milestone plan are maintained here:
