@@ -5,7 +5,7 @@ A Go-powered project aiming to become a writing, planning, and lettering toolcha
 This repository currently provides a development skeleton: a minimal CLI, an evolving domain model, and a public JSON schema for the project manifest. The product concept and roadmap live in docs/go_comic_writer_concept.md.
 
 - Vision: Empower comic creators to go from script to lettered pages in one streamlined, offline‑first tool.
-- Status: Early stage (0.2.1‑dev). Not production‑ready.
+- Status: Early stage (0.3.0‑dev). Not production‑ready.
 - License: Apache 2.0
 
 ## Contents
@@ -78,7 +78,7 @@ Expected output resembles:
 
 ```
 Go Comic Writer — development skeleton
-Version: 0.2.1-dev
+Version: 0.3.0-dev
 ```
 
 ## Usage
@@ -135,6 +135,37 @@ Notes and controls:
 - Drag with mouse to pan.
 - Ctrl + Mouse Wheel to zoom in/out.
 - Window title shows the project name when opened.
+
+### Script Editor (experimental)
+- Open the "Script" tab to write a structured script and see an outline update as you type.
+- Supported syntax (minimal initial version):
+  - Scene headers: lines starting with `#` (e.g., `# Opening Scene`) or `Scene: Title`.
+  - Character dialogue: `NAME: text` (NAME is treated case-insensitively and shown uppercase in the outline).
+    - Continuation lines: indent by two spaces to continue the previous dialogue/caption.
+  - Captions/Narration: `CAPTION: text` or `NARRATION: text`.
+  - Beat markers: `Panel 1 ...` or `Beat ...` are recognized and shown in the outline.
+  - Notes: lines starting with `;` are notes (not shown in outline for now).
+- Outline sidebar with search/filter:
+  - Type to filter by free text, e.g., words from scene titles or lines.
+  - Use @tags to filter by tags referenced in lines (e.g., `@prop`, `@theme-1`).
+  - Use `char:NAME` to filter by character dialogue (e.g., `char:ALICE`).
+  - Use `is:beat`, `is:dialogue`, `is:caption`, or `is:scene` to filter by item kind.
+  - Combine terms (space-separated) for AND filtering.
+- Save: File → Save writes both the manifest and your script to `<project>\script\script.txt`. 
+
+### Beat-to-Panel Mapping and Unmapped Warnings (experimental)
+- Beat lines in the script (those starting with "Panel ..." or "Beat ...") are assigned a stable identifier based on their source line number, in the form `b:<lineNo>` (e.g., `b:42`).
+- Panels can link beats via `linkedBeats` (array of strings) in the project manifest (comic.json). Example:
+  - "panels": [{"id": "p1", "zOrder": 0, "geometry": {"x":0,"y":0,"width":100,"height":100}, "linkedBeats": ["b:42"]}]
+- The Script tab outline shows a warning marker for unmapped beats: a "⚠ unmapped" suffix appears on beats that are not linked from any panel in the current project. A summary is also shown in the status bar (e.g., `Script: 7 beats (3 unmapped)`).
+- Programmatic mapping helper: `storage.MapBeatToPanel(ph, pageNumber, panelID, beatID)` adds a beat mapping to a panel if it exists. This is a building block ahead of a full UI for page/panel planning.
+
+### Bible (characters, locations, tags) — experimental
+- Open the "Bible" tab to manage reusable names and tags used in your script.
+- Characters and Locations: add names via the text field and Add button; select an item and click Delete to remove it.
+- Tags: add free-form tags (e.g., themes, props). Tags can be referenced in your script as `@tag`.
+- In the Script tab, use the buttons above the editor to insert a character line (NAME: ) or an `@tag` from the bible. This simulates auto-complete.
+- All bible data is saved in the project manifest (comic.json) under `bible`.
 
 Troubleshooting:
 - Linux may require OpenGL drivers and a working X11/Wayland setup. On headless CI this UI is not built by default.
@@ -228,9 +259,6 @@ Top‑level and key packages:
   - comic.schema.json — JSON schema for comic.json projects.
 - tmp_proj/ — sample project used in README examples; contains comic.json and backups/.
 - bin/ — local build output (e.g., gocomicwriter, gocomicwriter-ui); not published.
-- .github/ — automation:
-  - workflows/go.yml — CI: build, vet, test on pushes/PRs.
-  - dependabot.yml — dependency update configuration.
 - Root files:
   - README.md, CHANGELOG.md, LICENSE, CODE_OF_CONDUCT.md, go.mod, go.sum.
 
@@ -248,7 +276,7 @@ Highlights:
 - Deterministic exporters: PDF, PNG/SVG, CBZ
 
 ## CI/CD and releases
-- CI: .github/workflows/go.yml runs build, vet, and tests on pushes/PRs.
+- CI: not configured yet.
 - Releases: not configured yet; will be added once usable milestones are reached.
 
 ## Contributing and conduct
