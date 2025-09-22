@@ -18,6 +18,7 @@ type Project struct {
 	Name     string   `json:"name"`
 	Metadata Metadata `json:"metadata,omitempty"`
 	Issues   []Issue  `json:"issues"`
+	Bible    Bible    `json:"bible,omitempty"`
 }
 
 // Metadata contains optional descriptive metadata for a project.
@@ -141,4 +142,34 @@ type FX struct {
 	Outline bool    `json:"outline,omitempty"`
 	Shadow  bool    `json:"shadow,omitempty"`
 	Blur    float64 `json:"blur,omitempty"`
+}
+
+// Bible captures characters, locations, and tags used across the project.
+// It is intentionally lightweight for early tagging and auto-complete.
+type Bible struct {
+	Characters []BibleCharacter `json:"characters,omitempty"`
+	Locations  []BibleLocation  `json:"locations,omitempty"`
+	Tags       []BibleTag       `json:"tags,omitempty"`
+}
+
+// BibleCharacter stores a character entry for the script editor.
+type BibleCharacter struct {
+	Name    string   `json:"name"`
+	Aliases []string `json:"aliases,omitempty"`
+	Tags    []string `json:"tags,omitempty"`
+	Notes   string   `json:"notes,omitempty"`
+}
+
+// BibleLocation stores a location entry.
+type BibleLocation struct {
+	Name    string   `json:"name"`
+	Aliases []string `json:"aliases,omitempty"`
+	Tags    []string `json:"tags,omitempty"`
+	Notes   string   `json:"notes,omitempty"`
+}
+
+// BibleTag stores a free-form tag that can be referenced as @tag in scripts.
+type BibleTag struct {
+	Name  string `json:"name"`
+	Notes string `json:"notes,omitempty"`
 }

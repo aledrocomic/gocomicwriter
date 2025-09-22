@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"math"
 	"path/filepath"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -25,7 +26,9 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"gocomicwriter/internal/crash"
+	"gocomicwriter/internal/domain"
 	applog "gocomicwriter/internal/log"
+	"gocomicwriter/internal/script"
 	"gocomicwriter/internal/storage"
 	"gocomicwriter/internal/vector"
 )
@@ -46,11 +49,382 @@ func Run(projectDir string) error {
 	status := widget.NewLabel("Ready")
 	canvasWidget := NewPageCanvas()
 
-	// Layout: left placeholder nav, center canvas, right placeholder inspector
+	// Canvas layout panes
 	left := container.NewVBox(widget.NewLabel("Pages"), widget.NewSeparator(), widget.NewLabel("(placeholder)"))
 	right := container.NewVBox(widget.NewLabel("Inspector"), widget.NewSeparator(), widget.NewLabel("(placeholder)"))
-	center := container.NewMax(canvasWidget)
-	content := container.NewBorder(nil, status, left, right, center)
+	canvasCenter := container.NewMax(canvasWidget)
+	canvasPane := container.NewBorder(nil, nil, left, right, canvasCenter)
+
+	// Script editor UI
+	scriptEntry := widget.NewMultiLineEntry()
+	scriptEntry.SetPlaceHolder("Type your script here. Use scene headers like \"# Scene Title\" and character lines like \"ALICE: Hello\". Indent continuation lines with two spaces.")
+	// Outline data structures
+	type outlineItem struct {
+		kind      string   // scene, dialogue, caption, beat
+		display   string   // final display string
+		character string   // for dialogue
+		tags      []string // extracted @tags from parser
+	}
+	outlineItems := []outlineItem{}
+	outlineData := []string{}
+	outlineFilter := ""
+
+	scriptOutline := widget.NewList(
+		func() int { return len(outlineData) },
+		func() fyne.CanvasObject { return widget.NewLabel("") },
+		func(i widget.ListItemID, o fyne.CanvasObject) { o.(*widget.Label).SetText(outlineData[i]) },
+	)
+
+	applyOutlineFilter := func() {
+		// rebuild visible strings from items according to filter
+		outlineData = outlineData[:0]
+		q := strings.TrimSpace(outlineFilter)
+		if q == "" {
+			for _, it := range outlineItems {
+				outlineData = append(outlineData, it.display)
+			}
+			scriptOutline.Refresh()
+			return
+		}
+		tokens := strings.Fields(strings.ToLower(q))
+		for _, it := range outlineItems {
+			displayLower := strings.ToLower(it.display)
+			match := true
+			for _, tok := range tokens {
+				if strings.HasPrefix(tok, "@") {
+					tag := strings.TrimPrefix(tok, "@")
+					found := false
+					for _, tg := range it.tags {
+						if tg == tag {
+							found = true
+							break
+						}
+					}
+					if !found {
+						match = false
+						break
+					}
+				} else if strings.HasPrefix(tok, "char:") {
+					name := strings.ToUpper(strings.TrimSpace(strings.TrimPrefix(tok, "char:")))
+					if it.character != name {
+						match = false
+						break
+					}
+				} else if strings.HasPrefix(tok, "is:") || strings.HasPrefix(tok, "type:") {
+					idx := strings.Index(tok, ":")
+					typeVal := tok[idx+1:]
+					if it.kind != typeVal {
+						match = false
+						break
+					}
+				} else {
+					if !strings.Contains(displayLower, tok) {
+						match = false
+						break
+					}
+				}
+			}
+			if match {
+				outlineData = append(outlineData, it.display)
+			}
+		}
+		scriptOutline.Refresh()
+	}
+	// Search/filter entry for outline
+	outlineSearch := widget.NewEntry()
+	outlineSearch.SetPlaceHolder("Filter outline (text, @tag, char:NAME, is:beat|dialogue|caption|scene)")
+	outlineSearch.OnChanged = func(q string) {
+		outlineFilter = strings.ToLower(strings.TrimSpace(q))
+		applyOutlineFilter()
+	}
+
+	scriptErr := widget.NewLabel("")
+	scriptErr.Wrapping = fyne.TextWrapWord
+
+	// Bible data and UI state
+	charNames := []string{}
+	locNames := []string{}
+	tagNames := []string{}
+	var charList *widget.List
+	var locList *widget.List
+	var tagList *widget.List
+	selectedChar := -1
+	selectedLoc := -1
+	selectedTag := -1
+
+	refreshBible := func() {
+		if ph == nil {
+			charNames = charNames[:0]
+			locNames = locNames[:0]
+			tagNames = tagNames[:0]
+		} else {
+			charNames = charNames[:0]
+			for _, c := range ph.Project.Bible.Characters {
+				n := strings.TrimSpace(c.Name)
+				if n != "" {
+					charNames = append(charNames, n)
+				}
+			}
+			locNames = locNames[:0]
+			for _, c := range ph.Project.Bible.Locations {
+				n := strings.TrimSpace(c.Name)
+				if n != "" {
+					locNames = append(locNames, n)
+				}
+			}
+			tagNames = tagNames[:0]
+			for _, t := range ph.Project.Bible.Tags {
+				n := strings.TrimSpace(t.Name)
+				if n != "" {
+					tagNames = append(tagNames, n)
+				}
+			}
+		}
+		if charList != nil {
+			charList.Refresh()
+		}
+		if locList != nil {
+			locList.Refresh()
+		}
+		if tagList != nil {
+			tagList.Refresh()
+		}
+	}
+
+	var updateOutline func(string)
+
+	// Insert helpers using bible
+	insertCharacterLine := func(name string) {
+		if strings.TrimSpace(name) == "" {
+			return
+		}
+		txt := scriptEntry.Text
+		if len(txt) > 0 && !strings.HasSuffix(txt, "\n") {
+			txt += "\n"
+		}
+		txt += strings.ToUpper(name) + ": "
+		scriptEntry.SetText(txt)
+		updateOutline(txt)
+	}
+	insertTag := func(tag string) {
+		if strings.TrimSpace(tag) == "" {
+			return
+		}
+		txt := scriptEntry.Text
+		if len(txt) > 0 && !strings.HasSuffix(txt, " ") && !strings.HasSuffix(txt, "\n") {
+			txt += " "
+		}
+		txt += "@" + tag
+		scriptEntry.SetText(txt)
+		updateOutline(txt)
+	}
+
+	updateOutline = func(txt string) {
+		sc, errs := script.Parse(txt)
+		// build outline items and compute unmapped beat warnings
+		mapped := map[string]struct{}{}
+		if ph != nil {
+			mapped = storage.MappedBeatSet(ph.Project)
+		}
+		totalBeats := 0
+		unmappedBeats := 0
+		outlineItems = outlineItems[:0]
+		for si, scn := range sc.Scenes {
+			st := strings.TrimSpace(scn.Title)
+			outlineItems = append(outlineItems, outlineItem{kind: "scene", display: "Scene: " + st})
+			for _, ln := range scn.Lines {
+				switch ln.Type {
+				case script.LineDialogue:
+					preview := ln.Text
+					if len(preview) > 60 {
+						preview = preview[:60] + "…"
+					}
+					outlineItems = append(outlineItems, outlineItem{kind: "dialogue", display: "  " + ln.Character + ": " + preview, character: ln.Character, tags: ln.Tags})
+				case script.LineCaption:
+					preview := ln.Text
+					if len(preview) > 60 {
+						preview = preview[:60] + "…"
+					}
+					outlineItems = append(outlineItems, outlineItem{kind: "caption", display: "  [CAPTION] " + preview, tags: ln.Tags})
+				case script.LineBeat:
+					totalBeats++
+					preview := ln.Text
+					if len(preview) > 60 {
+						preview = preview[:60] + "…"
+					}
+					id := storage.BeatIDFor(si, ln)
+					display := "  [" + ln.Character + "] " + preview
+					if _, ok := mapped[id]; !ok {
+						// not mapped to any panel -> warn
+						unmappedBeats++
+						display += "  ⚠ unmapped"
+					}
+					outlineItems = append(outlineItems, outlineItem{kind: "beat", display: display, tags: ln.Tags})
+				default:
+					// skip notes/unknown in outline for now
+				}
+			}
+		}
+		// apply filter to build visible data
+		applyOutlineFilter()
+		if len(errs) > 0 {
+			scriptErr.SetText(errs[0].Message)
+		} else {
+			scriptErr.SetText("")
+		}
+		// Update status with beat coverage information
+		if totalBeats > 0 {
+			status.SetText(fmt.Sprintf("Script: %d beats (%d unmapped)", totalBeats, unmappedBeats))
+		} else {
+			status.SetText("Script: no beats detected")
+		}
+	}
+	scriptEntry.OnChanged = func(s string) { updateOutline(s) }
+
+	// Script insertion controls leveraging the bible
+	insertCharBtn := widget.NewButton("Insert Character", func() {
+		if ph == nil || len(ph.Project.Bible.Characters) == 0 {
+			dialog.ShowInformation("Insert Character", "No project open or no characters in bible.", w)
+			return
+		}
+		// ensure names are current
+		refreshBible()
+		sel := widget.NewSelect(charNames, nil)
+		sel.PlaceHolder = "Choose character"
+		dialog.NewCustomConfirm("Insert Character", "Insert", "Cancel", sel, func(ok bool) {
+			if ok && sel.Selected != "" {
+				insertCharacterLine(sel.Selected)
+			}
+		}, w).Show()
+	})
+	insertTagBtn := widget.NewButton("Insert @Tag", func() {
+		if ph == nil || len(ph.Project.Bible.Tags) == 0 {
+			dialog.ShowInformation("Insert Tag", "No project open or no tags in bible.", w)
+			return
+		}
+		refreshBible()
+		sel := widget.NewSelect(tagNames, nil)
+		sel.PlaceHolder = "Choose tag"
+		dialog.NewCustomConfirm("Insert Tag", "Insert", "Cancel", sel, func(ok bool) {
+			if ok && sel.Selected != "" {
+				insertTag(sel.Selected)
+			}
+		}, w).Show()
+	})
+	scriptControls := container.NewHBox(insertCharBtn, insertTagBtn)
+
+	// script pane
+	outlineBox := container.NewBorder(container.NewVBox(widget.NewLabel("Outline"), outlineSearch), nil, nil, nil, scriptOutline)
+	scriptSplit := container.NewHSplit(scriptEntry, outlineBox)
+	scriptSplit.Offset = 0.7
+	scriptPane := container.NewBorder(scriptControls, scriptErr, nil, nil, scriptSplit)
+
+	// Bible management UI
+	charList = widget.NewList(
+		func() int { return len(charNames) },
+		func() fyne.CanvasObject { return widget.NewLabel("") },
+		func(i widget.ListItemID, o fyne.CanvasObject) { o.(*widget.Label).SetText(charNames[i]) },
+	)
+	charList.OnSelected = func(id widget.ListItemID) { selectedChar = int(id) }
+	addCharEntry := widget.NewEntry()
+	addCharEntry.SetPlaceHolder("Add character name")
+	addCharBtn := widget.NewButton("Add", func() {
+		if ph == nil {
+			dialog.ShowInformation("Characters", "Open a project first.", w)
+			return
+		}
+		name := strings.TrimSpace(addCharEntry.Text)
+		if name == "" {
+			return
+		}
+		ph.Project.Bible.Characters = append(ph.Project.Bible.Characters, domain.BibleCharacter{Name: name})
+		addCharEntry.SetText("")
+		refreshBible()
+	})
+	delCharBtn := widget.NewButton("Delete", func() {
+		if ph == nil || selectedChar < 0 || selectedChar >= len(ph.Project.Bible.Characters) {
+			return
+		}
+		ph.Project.Bible.Characters = append(ph.Project.Bible.Characters[:selectedChar], ph.Project.Bible.Characters[selectedChar+1:]...)
+		selectedChar = -1
+		refreshBible()
+	})
+	charBox := container.NewVBox(widget.NewLabel("Characters"), charList, container.NewHBox(addCharEntry, addCharBtn, delCharBtn))
+
+	// Locations
+	locList = widget.NewList(
+		func() int { return len(locNames) },
+		func() fyne.CanvasObject { return widget.NewLabel("") },
+		func(i widget.ListItemID, o fyne.CanvasObject) { o.(*widget.Label).SetText(locNames[i]) },
+	)
+	locList.OnSelected = func(id widget.ListItemID) { selectedLoc = int(id) }
+	addLocEntry := widget.NewEntry()
+	addLocEntry.SetPlaceHolder("Add location name")
+	addLocBtn := widget.NewButton("Add", func() {
+		if ph == nil {
+			dialog.ShowInformation("Locations", "Open a project first.", w)
+			return
+		}
+		name := strings.TrimSpace(addLocEntry.Text)
+		if name == "" {
+			return
+		}
+		ph.Project.Bible.Locations = append(ph.Project.Bible.Locations, domain.BibleLocation{Name: name})
+		addLocEntry.SetText("")
+		refreshBible()
+	})
+	delLocBtn := widget.NewButton("Delete", func() {
+		if ph == nil || selectedLoc < 0 || selectedLoc >= len(ph.Project.Bible.Locations) {
+			return
+		}
+		ph.Project.Bible.Locations = append(ph.Project.Bible.Locations[:selectedLoc], ph.Project.Bible.Locations[selectedLoc+1:]...)
+		selectedLoc = -1
+		refreshBible()
+	})
+	locBox := container.NewVBox(widget.NewLabel("Locations"), locList, container.NewHBox(addLocEntry, addLocBtn, delLocBtn))
+
+	// Tags
+	tagList = widget.NewList(
+		func() int { return len(tagNames) },
+		func() fyne.CanvasObject { return widget.NewLabel("") },
+		func(i widget.ListItemID, o fyne.CanvasObject) { o.(*widget.Label).SetText(tagNames[i]) },
+	)
+	tagList.OnSelected = func(id widget.ListItemID) { selectedTag = int(id) }
+	addTagEntry := widget.NewEntry()
+	addTagEntry.SetPlaceHolder("Add tag")
+	addTagBtn := widget.NewButton("Add", func() {
+		if ph == nil {
+			dialog.ShowInformation("Tags", "Open a project first.", w)
+			return
+		}
+		name := strings.TrimSpace(addTagEntry.Text)
+		if name == "" {
+			return
+		}
+		ph.Project.Bible.Tags = append(ph.Project.Bible.Tags, domain.BibleTag{Name: name})
+		addTagEntry.SetText("")
+		refreshBible()
+	})
+	delTagBtn := widget.NewButton("Delete", func() {
+		if ph == nil || selectedTag < 0 || selectedTag >= len(ph.Project.Bible.Tags) {
+			return
+		}
+		ph.Project.Bible.Tags = append(ph.Project.Bible.Tags[:selectedTag], ph.Project.Bible.Tags[selectedTag+1:]...)
+		selectedTag = -1
+		refreshBible()
+	})
+	tagBox := container.NewVBox(widget.NewLabel("Tags"), tagList, container.NewHBox(addTagEntry, addTagBtn, delTagBtn))
+
+	biblePane := container.NewGridWithColumns(3, charBox, locBox, tagBox)
+	refreshBible()
+
+	// Tabs
+	tabs := container.NewAppTabs(
+		container.NewTabItem("Canvas", canvasPane),
+		container.NewTabItem("Script", scriptPane),
+		container.NewTabItem("Bible", biblePane),
+	)
+	content := container.NewBorder(nil, status, nil, nil, tabs)
 	w.SetContent(content)
 
 	// Build menus
@@ -68,6 +442,16 @@ func Run(projectDir string) error {
 				l.Error("open project failed", slog.Any("err", err))
 				dialog.ShowError(err, w)
 			}
+			// Load script text after successful open
+			if ph != nil {
+				if txt, rerr := storage.ReadScript(ph); rerr == nil {
+					scriptEntry.SetText(txt)
+					updateOutline(txt)
+					refreshBible()
+				} else {
+					l.Error("read script failed", slog.Any("err", rerr))
+				}
+			}
 		}, w)
 		fd.Show()
 	})
@@ -81,7 +465,12 @@ func Run(projectDir string) error {
 			dialog.ShowError(err, w)
 			return
 		}
-		status.SetText("Saved project and created a backup.")
+		if err := storage.WriteScript(ph, scriptEntry.Text); err != nil {
+			l.Error("save script failed", slog.Any("err", err))
+			dialog.ShowError(err, w)
+			return
+		}
+		status.SetText("Saved project (manifest + script).")
 	})
 	exitItem := fyne.NewMenuItem("Exit", func() { w.Close() })
 
@@ -93,6 +482,14 @@ func Run(projectDir string) error {
 		if err := openProject(projectDir, &ph, w, l, status); err != nil {
 			l.Error("auto-open project failed", slog.Any("err", err))
 			// not fatal; continue
+		} else {
+			if txt, rerr := storage.ReadScript(ph); rerr == nil {
+				scriptEntry.SetText(txt)
+				updateOutline(txt)
+				refreshBible()
+			} else {
+				l.Error("read script failed", slog.Any("err", rerr))
+			}
 		}
 	}
 

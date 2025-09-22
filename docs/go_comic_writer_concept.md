@@ -217,10 +217,10 @@ Alignment with Definition of Done:
 - [✓] Implement hit testing and selection; transform handles (move/scale/rotate).
 
 ### Phase 2 — Script Editor
-- [ ] Implement a structured script editor with scene/character syntax support.
-- [ ] Character/location bible with auto-complete and tagging.
-- [ ] Beat tagging and a sidebar outline; search/filter.
-- [ ] Map beats to pages/panels; show unmapped beat warnings.
+- [✓] Implement a structured script editor with scene/character syntax support.
+- [✓] Character/location bible with auto-complete and tagging.
+- [✓] Beat tagging and a sidebar outline; search/filter.
+- [✓] Map beats to pages/panels; show unmapped beat warnings.
 
 ### Phase 3 — Page & Panel Planner
 - [ ] Issue setup dialog (trim, bleed, dpi, reading direction).

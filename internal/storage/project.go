@@ -318,3 +318,41 @@ func AutosaveCrashSnapshot(ph *ProjectHandle) (string, error) {
 	l.Info("crash snapshot written", slog.String("path", bpath))
 	return bpath, nil
 }
+
+// ScriptFilePath returns the default path for the script text file in the project.
+func ScriptFilePath(ph *ProjectHandle) string {
+	if ph == nil {
+		return ""
+	}
+	return filepath.Join(ph.Root, "script", "script.txt")
+}
+
+// ReadScript loads the script text from the project's script folder.
+// If the file does not exist, it returns an empty string and no error.
+func ReadScript(ph *ProjectHandle) (string, error) {
+	if ph == nil {
+		return "", errors.New("nil ProjectHandle")
+	}
+	path := ScriptFilePath(ph)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return string(b), nil
+}
+
+// WriteScript writes the given script text to the project's script folder.
+func WriteScript(ph *ProjectHandle, text string) error {
+	if ph == nil {
+		return errors.New("nil ProjectHandle")
+	}
+	dir := filepath.Join(ph.Root, "script")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	path := ScriptFilePath(ph)
+	return writeFileSync(path, []byte(text))
+}

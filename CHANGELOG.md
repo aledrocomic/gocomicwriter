@@ -6,6 +6,15 @@ The format is based on Keep a Changelog (https://keepachangelog.com/en/1.1.0/),
 and this project adheres to Semantic Versioning. This is a pre-release
 (0.x) and APIs may change at any time.
 
+## [0.3.0-dev] - 2025-09-22
+
+### Added
+#### Script Editor
+- Implement a structured script editor with scene/character syntax support.
+- Character/location bible with auto-complete and tagging.
+- Beat tagging and a sidebar outline; search/filter.
+- Map beats to pages/panels; show unmapped beat warnings.
+
 ## [0.2.1-dev] - 2025-09-22
 
 ### Added
