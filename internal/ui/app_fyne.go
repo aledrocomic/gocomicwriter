@@ -201,11 +201,13 @@ func (p *PageCanvas) CreateRenderer() fyne.WidgetRenderer {
 	gutter.FillColor = color.RGBA{R: 120, G: 200, B: 0, A: 40}
 	gutter.StrokeWidth = 1
 
-	// Node polygons
-	var polys []*canvas.Polygon
-	for i := range p.scene {
-		poly := &canvas.Polygon{FillColor: color.RGBA{R: 220, G: 220, B: 220, A: 255}, StrokeColor: color.RGBA{R: 30, G: 30, B: 30, A: 255}, StrokeWidth: 1}
-		polys = append(polys, poly)
+	// Node rectangles (use Rectangle instead of Polygon to match Fyne v2.6 API)
+	var rects []*canvas.Rectangle
+	for j := 0; j < len(p.scene); j++ {
+		r := canvas.NewRectangle(color.RGBA{R: 220, G: 220, B: 220, A: 255})
+		r.StrokeColor = color.RGBA{R: 30, G: 30, B: 30, A: 255}
+		r.StrokeWidth = 1
+		rects = append(rects, r)
 	}
 
 	// Selection overlay: bbox and 4 corner handles + rotation handle
@@ -228,8 +230,8 @@ func (p *PageCanvas) CreateRenderer() fyne.WidgetRenderer {
 
 	// Draw order: background, bleed (outside), page base, then guides, then nodes and selection overlay on top
 	objs := []fyne.CanvasObject{bg, bleed, page, trim, gutter}
-	for _, poly := range polys {
-		objs = append(objs, poly)
+	for _, r := range rects {
+		objs = append(objs, r)
 	}
 	objs = append(objs, bbox)
 	for _, h := range handles {
@@ -237,7 +239,7 @@ func (p *PageCanvas) CreateRenderer() fyne.WidgetRenderer {
 	}
 	objs = append(objs, rot)
 
-	return &pageCanvasRenderer{pc: p, objects: objs, bg: bg, page: page, trim: trim, bleed: bleed, gutter: gutter, polys: polys, bbox: bbox, handles: handles, rot: rot}
+	return &pageCanvasRenderer{pc: p, objects: objs, bg: bg, page: page, trim: trim, bleed: bleed, gutter: gutter, rects: rects, bbox: bbox, handles: handles, rot: rot}
 }
 
 // PreferredSize sets a decent default size for the widget.
@@ -446,7 +448,7 @@ type pageCanvasRenderer struct {
 	trim, bleed *canvas.Rectangle
 	gutter      *canvas.Rectangle
 	// scene visuals
-	polys []*canvas.Polygon
+	rects []*canvas.Rectangle
 	// selection visuals
 	bbox    *canvas.Rectangle
 	handles []*canvas.Rectangle
@@ -514,26 +516,22 @@ func (r *pageCanvasRenderer) Layout(size fyne.Size) {
 
 	// Scene nodes as axis-aligned rectangles using their Bounds()
 	for i, n := range r.pc.scene {
-		if i >= len(r.polys) {
+		if i >= len(r.rects) {
 			break
 		}
 		b := n.Bounds()
 		p0 := r.pc.toScreen(vector.Pt{X: b.X, Y: b.Y})
 		p1 := r.pc.toScreen(vector.Pt{X: b.X + b.W, Y: b.Y + b.H})
-		poly := r.polys[i]
-		poly.Points = []fyne.Position{
-			fyne.NewPos(float32ToFixed(p0.X), float32ToFixed(p0.Y)),
-			fyne.NewPos(float32ToFixed(p1.X), float32ToFixed(p0.Y)),
-			fyne.NewPos(float32ToFixed(p1.X), float32ToFixed(p1.Y)),
-			fyne.NewPos(float32ToFixed(p0.X), float32ToFixed(p1.Y)),
-		}
+		rc := r.rects[i]
+		rc.Resize(fyne.NewSize(float32ToFixed(float32(p1.X-p0.X)), float32ToFixed(float32(p1.Y-p0.Y))))
+		rc.Move(fyne.NewPos(float32ToFixed(p0.X), float32ToFixed(p0.Y)))
 		// Color per node demo
 		if i%2 == 0 {
-			poly.FillColor = color.RGBA{R: 240, G: 160, B: 160, A: 255}
+			rc.FillColor = color.RGBA{R: 240, G: 160, B: 160, A: 255}
 		} else {
-			poly.FillColor = color.RGBA{R: 160, G: 200, B: 240, A: 255}
+			rc.FillColor = color.RGBA{R: 160, G: 200, B: 240, A: 255}
 		}
-		poly.Refresh()
+		rc.Refresh()
 	}
 
 	// Selection overlay
