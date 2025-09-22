@@ -1,5 +1,3 @@
-//go:build fyne && !cgo
-
 /*
  * Copyright (c) 2025 by Alexander Drost, Oldenburg, Germany.
  * This file is licensed to you under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License.  You may obtain a copy of the License at
@@ -8,12 +6,52 @@
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the License for the specific language governing permissions and limitations under the License.
  */
 
-package ui
+package vector
 
-import "fmt"
+// Styles and paint definitions.
 
-// Run informs the user that Fyne UI requires cgo (OpenGL) and a C toolchain.
-// This stub is compiled when the build uses -tags fyne but CGO is disabled.
-func Run(_ string) error {
-	return fmt.Errorf("Fyne UI requires cgo (OpenGL). Enable cgo and install a C toolchain. On Windows: install MSYS2/MinGW-w64, ensure gcc is on PATH, then run with CGO_ENABLED=1. Example: set CGO_ENABLED=1 && go run -tags fyne ./cmd/gocomicwriter ui [projectDir]")
+type Color struct{ R, G, B, A uint8 }
+
+var (
+	Black       = Color{0, 0, 0, 255}
+	White       = Color{255, 255, 255, 255}
+	Transparent = Color{0, 0, 0, 0}
+)
+
+type FillRule uint8
+
+const (
+	NonZero FillRule = iota
+	EvenOdd
+)
+
+type Fill struct {
+	Color   Color
+	Rule    FillRule
+	Enabled bool
+}
+
+type LineCap uint8
+
+const (
+	CapButt LineCap = iota
+	CapRound
+	CapSquare
+)
+
+type LineJoin uint8
+
+const (
+	JoinMiter LineJoin = iota
+	JoinRound
+	JoinBevel
+)
+
+type Stroke struct {
+	Color    Color
+	Width    float32
+	Cap      LineCap
+	Join     LineJoin
+	MiterLim float32
+	Enabled  bool
 }

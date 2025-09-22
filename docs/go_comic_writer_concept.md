@@ -206,12 +206,12 @@ Alignment with Definition of Done:
 - [✓] Implement slog logging with custom handler.
 - [✓] Implement logging, error reporting, and crash-safe autosave.
 - [✓] Implement file I/O: create/open/save project; transactional writes; backups.
-- [✓] Implement fist tests to start etsting early.
+- [✓] Implement fist tests to start testing early.
 - [✓] Implement basic UI shell with canvas editor.
 - [✓] Implement basic storage layer with JSON manifest.
 
 ### Phase 1 — Core Rendering & Geometry
-- [ ] Build vector primitives and text layout abstraction.
+- [✓] Build vector primitives and text layout abstraction.
 - [ ] Implement page canvas with trim/bleed/gutter guides.
 - [ ] Implement shapes: rectangles, ellipses, rounded boxes, paths.
 - [ ] Implement hit testing and selection; transform handles (move/scale/rotate).
