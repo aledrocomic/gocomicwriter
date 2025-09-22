@@ -213,8 +213,8 @@ Alignment with Definition of Done:
 ### Phase 1 — Core Rendering & Geometry
 - [✓] Build vector primitives and text layout abstraction.
 - [✓] Implement page canvas with trim/bleed/gutter guides.
-- [ ] Implement shapes: rectangles, ellipses, rounded boxes, paths.
-- [ ] Implement hit testing and selection; transform handles (move/scale/rotate).
+- [✓] Implement shapes: rectangles, ellipses, rounded boxes, paths.
+- [✓] Implement hit testing and selection; transform handles (move/scale/rotate).
 
 ### Phase 2 — Script Editor
 - [ ] Implement a structured script editor with scene/character syntax support.
