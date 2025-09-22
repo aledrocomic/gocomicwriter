@@ -6,6 +6,14 @@ The format is based on Keep a Changelog (https://keepachangelog.com/en/1.1.0/),
 and this project adheres to Semantic Versioning. This is a pre-release
 (0.x) and APIs may change at any time.
 
+## [0.2.0-dev] - 2025-09-22
+
+### Added
+- Build vector primitives and text layout abstraction.
+- Implement page canvas with trim/bleed/gutter guides.
+- Implement shapes: rectangles, ellipses, rounded boxes, paths.
+- [Implement hit testing and selection; transform handles (move/scale/rotate).
+
 ## [0.1.2-dev] - 2025-09-21
 
 ### Added
