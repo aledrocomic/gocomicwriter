@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"image/color"
 	"log/slog"
+	"math"
 	"path/filepath"
 
 	"fyne.io/fyne/v2"
@@ -26,6 +27,7 @@ import (
 	"gocomicwriter/internal/crash"
 	applog "gocomicwriter/internal/log"
 	"gocomicwriter/internal/storage"
+	"gocomicwriter/internal/vector"
 )
 
 // Run starts the Fyne-based desktop UI shell with a basic canvas editor placeholder.
@@ -126,7 +128,33 @@ type PageCanvas struct {
 	trimMargin  float32
 	gutterSize  float32 // inner margin width
 	gutterLeft  bool    // if false, gutter is drawn on the right
+
+	// Scene graph (demo) and selection
+	scene    []vector.Node
+	selected int // index into scene, -1 if none
+	// Interaction state for transforms
+	dragMode  dragMode
+	startPage vector.Pt
+	startXf   vector.Affine2D
+	// For scale/rotate operations
+	anchor vector.Pt
 }
+
+// dragMode represents current interaction kind
+// dragNone: idle; dragPan: background pan; dragMove: moving selection; dragScale*: corner scaling; dragRotate: rotation handle
+// We keep minimal 4 corners and 1 rotation handle.
+type dragMode int
+
+const (
+	dragNone dragMode = iota
+	dragPan
+	dragMove
+	dragScaleNW
+	dragScaleNE
+	dragScaleSW
+	dragScaleSE
+	dragRotate
+)
 
 func NewPageCanvas() *PageCanvas {
 	pc := &PageCanvas{
@@ -137,7 +165,15 @@ func NewPageCanvas() *PageCanvas {
 		trimMargin:  9,   // ~0.125in
 		gutterSize:  18,  // ~0.25in inner margin
 		gutterLeft:  true,
+		selected:    -1,
 	}
+	// Demo scene: two rectangles
+	r1 := vector.NewRect(vector.R(100, 100, 160, 120), vector.Fill{Enabled: true, Color: vector.Color{R: 220, G: 120, B: 120, A: 255}}, vector.Stroke{Enabled: true, Color: vector.Black, Width: 2})
+	r2 := vector.NewRect(vector.R(300, 220, 180, 100), vector.Fill{Enabled: true, Color: vector.Color{R: 120, G: 180, B: 220, A: 255}}, vector.Stroke{Enabled: true, Color: vector.Black, Width: 2})
+	// Give second a slight rotation for testing rotate handler later
+	r2.SetTransform(r2.Transform().Mul(vector.Translate(390, 270)).Mul(vector.Rotate(0.2)).Mul(vector.Translate(-390, -270)))
+	pc.scene = []vector.Node{r1, r2}
+
 	pc.ExtendBaseWidget(pc)
 	return pc
 }
@@ -165,22 +201,227 @@ func (p *PageCanvas) CreateRenderer() fyne.WidgetRenderer {
 	gutter.FillColor = color.RGBA{R: 120, G: 200, B: 0, A: 40}
 	gutter.StrokeWidth = 1
 
-	// Draw order: background, bleed (outside), page base, then guides on top
-	objs := []fyne.CanvasObject{bg, bleed, page, trim, gutter}
+	// Node polygons
+	var polys []*canvas.Polygon
+	for i := range p.scene {
+		poly := &canvas.Polygon{FillColor: color.RGBA{R: 220, G: 220, B: 220, A: 255}, StrokeColor: color.RGBA{R: 30, G: 30, B: 30, A: 255}, StrokeWidth: 1}
+		polys = append(polys, poly)
+	}
 
-	return &pageCanvasRenderer{pc: p, objects: objs, bg: bg, page: page, trim: trim, bleed: bleed, gutter: gutter}
+	// Selection overlay: bbox and 4 corner handles + rotation handle
+	bbox := canvas.NewRectangle(color.RGBA{0, 0, 0, 0})
+	bbox.StrokeColor = color.RGBA{R: 0, G: 170, B: 255, A: 255}
+	bbox.StrokeWidth = 1
+	bbox.Hide()
+
+	handles := []*canvas.Rectangle{
+		canvas.NewRectangle(color.RGBA{R: 0, G: 170, B: 255, A: 255}),
+		canvas.NewRectangle(color.RGBA{R: 0, G: 170, B: 255, A: 255}),
+		canvas.NewRectangle(color.RGBA{R: 0, G: 170, B: 255, A: 255}),
+		canvas.NewRectangle(color.RGBA{R: 0, G: 170, B: 255, A: 255}),
+	}
+	for _, h := range handles {
+		h.Hide()
+	}
+	rot := canvas.NewCircle(color.RGBA{R: 255, G: 170, B: 0, A: 255})
+	rot.Hide()
+
+	// Draw order: background, bleed (outside), page base, then guides, then nodes and selection overlay on top
+	objs := []fyne.CanvasObject{bg, bleed, page, trim, gutter}
+	for _, poly := range polys {
+		objs = append(objs, poly)
+	}
+	objs = append(objs, bbox)
+	for _, h := range handles {
+		objs = append(objs, h)
+	}
+	objs = append(objs, rot)
+
+	return &pageCanvasRenderer{pc: p, objects: objs, bg: bg, page: page, trim: trim, bleed: bleed, gutter: gutter, polys: polys, bbox: bbox, handles: handles, rot: rot}
 }
 
 // PreferredSize sets a decent default size for the widget.
 func (p *PageCanvas) PreferredSize() fyne.Size { return fyne.NewSize(800, 600) }
 
-// Dragging and scrolling support
-func (p *PageCanvas) Dragged(e *fyne.DragEvent) {
-	p.offsetX += float32(e.Dragged.DX)
-	p.offsetY += float32(e.Dragged.DY)
+// Coordinate helpers: page <-> screen mapping
+func (p *PageCanvas) pageOriginAndScale() (cx, cy, scale float32) {
+	size := p.Size()
+	scaledW := p.pageW * p.zoom
+	scaledH := p.pageH * p.zoom
+	cx = float32(size.Width)/2 - scaledW/2 + p.offsetX
+	cy = float32(size.Height)/2 - scaledH/2 + p.offsetY
+	return cx, cy, p.zoom
+}
+func (p *PageCanvas) toScreen(pt vector.Pt) fyne.Position {
+	cx, cy, s := p.pageOriginAndScale()
+	x := cx + pt.X*s
+	y := cy + pt.Y*s
+	return fyne.NewPos(float32ToFixed(x), float32ToFixed(y))
+}
+func (p *PageCanvas) toPage(pos fyne.Position) vector.Pt {
+	cx, cy, s := p.pageOriginAndScale()
+	return vector.Pt{X: (float32(pos.X) - cx) / s, Y: (float32(pos.Y) - cy) / s}
+}
+
+// Hit test scene and return top-most index
+func (p *PageCanvas) hitTest(pagePt vector.Pt) int {
+	for i := len(p.scene) - 1; i >= 0; i-- {
+		if p.scene[i].Hit(pagePt) {
+			return i
+		}
+	}
+	return -1
+}
+
+// Light-weight rectangle type for handle geometry
+type fRect struct{ X, Y, Width, Height float32 }
+
+func newFRect(x, y, w, h float32) fRect { return fRect{X: x, Y: y, Width: w, Height: h} }
+
+// Handle rectangles in screen coords around selection bbox
+func (p *PageCanvas) handleRects() (bbox fRect, corners [4]fRect, rot fRect, ok bool) {
+	if p.selected < 0 || p.selected >= len(p.scene) {
+		return fRect{}, [4]fRect{}, fRect{}, false
+	}
+	b := p.scene[p.selected].Bounds() // page coords
+	p0 := p.toScreen(vector.Pt{X: b.X, Y: b.Y})
+	p1 := p.toScreen(vector.Pt{X: b.X + b.W, Y: b.Y + b.H})
+	bx := float32ToFixed(p0.X)
+	by := float32ToFixed(p0.Y)
+	bw := float32ToFixed(float32(p1.X - p0.X))
+	bh := float32ToFixed(float32(p1.Y - p0.Y))
+	bbox = newFRect(bx, by, bw, bh)
+	sz := float32(8)
+	hh := sz
+	hw := sz
+	corners = [4]fRect{
+		newFRect(bx-hw/2, by-hh/2, hw, hh),       // NW
+		newFRect(bx+bw-hw/2, by-hh/2, hw, hh),    // NE
+		newFRect(bx-hw/2, by+bh-hh/2, hw, hh),    // SW
+		newFRect(bx+bw-hw/2, by+bh-hh/2, hw, hh), // SE
+	}
+	// Rotation handle above top center
+	rcx := bx + bw/2
+	rcy := by - 24
+	rot = newFRect(rcx-6, rcy-6, 12, 12)
+	return bbox, corners, rot, true
+}
+
+// Tapped selects a node using hit testing
+func (p *PageCanvas) Tapped(e *fyne.PointEvent) {
+	pagePt := p.toPage(e.Position)
+	idx := p.hitTest(pagePt)
+	p.selected = idx
+	p.dragMode = dragNone
 	p.Refresh()
 }
-func (p *PageCanvas) DragEnd() {}
+
+// Dragging and scrolling support
+func (p *PageCanvas) Dragged(e *fyne.DragEvent) {
+	pos := e.Position
+	if p.dragMode == dragNone {
+		// Determine action by start position
+		if p.selected >= 0 {
+			_, corners, rot, ok := p.handleRects()
+			if ok {
+				if pos.X >= rot.X && pos.X <= rot.X+rot.Width && pos.Y >= rot.Y && pos.Y <= rot.Y+rot.Height {
+					p.dragMode = dragRotate
+				} else if pos.X >= corners[0].X && pos.X <= corners[0].X+corners[0].Width && pos.Y >= corners[0].Y && pos.Y <= corners[0].Y+corners[0].Height {
+					p.dragMode = dragScaleNW
+				} else if pos.X >= corners[1].X && pos.X <= corners[1].X+corners[1].Width && pos.Y >= corners[1].Y && pos.Y <= corners[1].Y+corners[1].Height {
+					p.dragMode = dragScaleNE
+				} else if pos.X >= corners[2].X && pos.X <= corners[2].X+corners[2].Width && pos.Y >= corners[2].Y && pos.Y <= corners[2].Y+corners[2].Height {
+					p.dragMode = dragScaleSW
+				} else if pos.X >= corners[3].X && pos.X <= corners[3].X+corners[3].Width && pos.Y >= corners[3].Y && pos.Y <= corners[3].Y+corners[3].Height {
+					p.dragMode = dragScaleSE
+				}
+			}
+		}
+		if p.dragMode == dragNone {
+			// If hit on selection body -> move; else pan
+			pagePt := p.toPage(pos)
+			if p.selected >= 0 && p.scene[p.selected].Hit(pagePt) {
+				p.dragMode = dragMove
+			} else {
+				p.dragMode = dragPan
+			}
+		}
+		p.startPage = p.toPage(pos)
+		if p.selected >= 0 {
+			p.startXf = p.scene[p.selected].Transform()
+			b := p.scene[p.selected].Bounds()
+			// default anchor: center; for scale set based on handle later
+			p.anchor = vector.Pt{X: b.X + b.W/2, Y: b.Y + b.H/2}
+		}
+	}
+
+	switch p.dragMode {
+	case dragPan:
+		p.offsetX += float32(e.Dragged.DX)
+		p.offsetY += float32(e.Dragged.DY)
+	case dragMove:
+		cur := p.toPage(pos)
+		dx := cur.X - p.startPage.X
+		dy := cur.Y - p.startPage.Y
+		if p.selected >= 0 {
+			newXf := vector.Translate(dx, dy).Mul(p.startXf)
+			p.scene[p.selected].SetTransform(newXf)
+		}
+	case dragScaleNW, dragScaleNE, dragScaleSW, dragScaleSE:
+		if p.selected >= 0 {
+			b := p.scene[p.selected].Bounds()
+			// Set anchor to opposite corner
+			var ax, ay float32
+			switch p.dragMode {
+			case dragScaleNW:
+				ax, ay = b.X+b.W, b.Y+b.H
+			case dragScaleNE:
+				ax, ay = b.X, b.Y+b.H
+			case dragScaleSW:
+				ax, ay = b.X+b.W, b.Y
+			case dragScaleSE:
+				ax, ay = b.X, b.Y
+			}
+			p.anchor = vector.Pt{X: ax, Y: ay}
+			cur := p.toPage(pos)
+			// Compute scale factors relative to bbox
+			var sx, sy float32 = 1, 1
+			if b.W != 0 {
+				sx = (cur.X - p.anchor.X) / (p.startPage.X - p.anchor.X)
+			}
+			if b.H != 0 {
+				sy = (cur.Y - p.anchor.Y) / (p.startPage.Y - p.anchor.Y)
+			}
+			// Guard against NaN or inf
+			if sx == 0 {
+				sx = 0.001
+			}
+			if sy == 0 {
+				sy = 0.001
+			}
+			xf := vector.Translate(p.anchor.X, p.anchor.Y).Mul(vector.Scale(sx, sy)).Mul(vector.Translate(-p.anchor.X, -p.anchor.Y)).Mul(p.startXf)
+			p.scene[p.selected].SetTransform(xf)
+		}
+	case dragRotate:
+		if p.selected >= 0 {
+			b := p.scene[p.selected].Bounds()
+			c := vector.Pt{X: b.X + b.W/2, Y: b.Y + b.H/2}
+			p.anchor = c
+			start := p.startPage
+			cur := p.toPage(pos)
+			// Angle between center->point vectors
+			dx0, dy0 := start.X-c.X, start.Y-c.Y
+			dx1, dy1 := cur.X-c.X, cur.Y-c.Y
+			ang0 := float32(math.Atan2(float64(dy0), float64(dx0)))
+			ang1 := float32(math.Atan2(float64(dy1), float64(dx1)))
+			dang := ang1 - ang0
+			xf := vector.Translate(c.X, c.Y).Mul(vector.Rotate(dang)).Mul(vector.Translate(-c.X, -c.Y)).Mul(p.startXf)
+			p.scene[p.selected].SetTransform(xf)
+		}
+	}
+	p.Refresh()
+}
+func (p *PageCanvas) DragEnd() { p.dragMode = dragNone }
 
 // Scroll changes zoom when Ctrl pressed, else pans vertically.
 func (p *PageCanvas) Scrolled(e *fyne.ScrollEvent) {
@@ -204,6 +445,12 @@ type pageCanvasRenderer struct {
 	bg, page    *canvas.Rectangle
 	trim, bleed *canvas.Rectangle
 	gutter      *canvas.Rectangle
+	// scene visuals
+	polys []*canvas.Polygon
+	// selection visuals
+	bbox    *canvas.Rectangle
+	handles []*canvas.Rectangle
+	rot     *canvas.Circle
 }
 
 func (r *pageCanvasRenderer) Destroy()                     {}
@@ -264,6 +511,54 @@ func (r *pageCanvasRenderer) Layout(size fyne.Size) {
 	gY := cy
 	r.gutter.Resize(fyne.NewSize(float32ToFixed(gW), float32ToFixed(gH)))
 	r.gutter.Move(fyne.NewPos(float32ToFixed(gX), float32ToFixed(gY)))
+
+	// Scene nodes as axis-aligned rectangles using their Bounds()
+	for i, n := range r.pc.scene {
+		if i >= len(r.polys) {
+			break
+		}
+		b := n.Bounds()
+		p0 := r.pc.toScreen(vector.Pt{X: b.X, Y: b.Y})
+		p1 := r.pc.toScreen(vector.Pt{X: b.X + b.W, Y: b.Y + b.H})
+		poly := r.polys[i]
+		poly.Points = []fyne.Position{
+			fyne.NewPos(float32ToFixed(p0.X), float32ToFixed(p0.Y)),
+			fyne.NewPos(float32ToFixed(p1.X), float32ToFixed(p0.Y)),
+			fyne.NewPos(float32ToFixed(p1.X), float32ToFixed(p1.Y)),
+			fyne.NewPos(float32ToFixed(p0.X), float32ToFixed(p1.Y)),
+		}
+		// Color per node demo
+		if i%2 == 0 {
+			poly.FillColor = color.RGBA{R: 240, G: 160, B: 160, A: 255}
+		} else {
+			poly.FillColor = color.RGBA{R: 160, G: 200, B: 240, A: 255}
+		}
+		poly.Refresh()
+	}
+
+	// Selection overlay
+	if r.pc.selected >= 0 {
+		bbox, corners, rot, ok := r.pc.handleRects()
+		if ok {
+			r.bbox.Show()
+			r.bbox.Resize(fyne.NewSize(bbox.Width, bbox.Height))
+			r.bbox.Move(fyne.NewPos(bbox.X, bbox.Y))
+			for i := 0; i < len(r.handles); i++ {
+				r.handles[i].Show()
+				r.handles[i].Resize(fyne.NewSize(corners[i].Width, corners[i].Height))
+				r.handles[i].Move(fyne.NewPos(corners[i].X, corners[i].Y))
+			}
+			r.rot.Show()
+			r.rot.Resize(fyne.NewSize(rot.Width, rot.Height))
+			r.rot.Move(fyne.NewPos(rot.X, rot.Y))
+		}
+	} else {
+		r.bbox.Hide()
+		for _, h := range r.handles {
+			h.Hide()
+		}
+		r.rot.Hide()
+	}
 }
 
 func float32ToFixed(v float32) float32 { return fyne.NewSize(v, 0).Width }
