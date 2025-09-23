@@ -1,0 +1,288 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  CI/CD pipeline for the gocomicwriter project using AWS CodePipeline + CodeBuild
+  with GitHub (CodeStar Connections) as the source. Deploy this stack in eu-west-1.
+  The build performs basic CI checks and produces binaries for linux/amd64 and
+  windows/amd64. Optionally publishes artifacts to an S3 bucket if provided.
+
+Metadata:
+  Notes: |
+    - This template creates:
+      * An S3 bucket for CodePipeline artifacts (retained on stack deletion)
+      * An IAM role for CodePipeline (least-privilege)
+      * An IAM role for CodeBuild (least-privilege)
+      * A CodeBuild project with inline buildspec
+      * A CodePipeline with Source (GitHub via CodeStar connection) and Build stages
+    - Region: deploy the stack in eu-west-1 as requested.
+    - Source provider: GitHub via CodeStar connection (create the connection in advance in Developer Tools → Connections)
+    - Release S3: If you set ReleaseBucketName, the build will attempt to upload artifacts to s3://<bucket>/releases/<tag-or-build>/. If left blank, upload is skipped.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: gocomicwriter
+    Description: Logical project name used for resources.
+  PipelineName:
+    Type: String
+    Default: gocomicwriter-pipeline
+    Description: Name of the CodePipeline to create.
+  GitHubConnectionArn:
+    Type: String
+    Description: ARN of an existing CodeStar connection to GitHub (e.g., arn:aws:codestar-connections:eu-west-1:<account-id>:connection/<id>)
+  GitHubOwner:
+    Type: String
+    Description: GitHub repository owner (user or org), e.g., alexa
+  GitHubRepo:
+    Type: String
+    Description: GitHub repository name, e.g., gocomicwriter
+  BranchName:
+    Type: String
+    Default: main
+    Description: Branch to track for CI builds.
+  ReleaseBucketName:
+    Type: String
+    Default: ''
+    Description: Optional S3 bucket name to publish release artifacts to. Leave empty to skip S3 publish.
+  BuildImage:
+    Type: String
+    Default: aws/codebuild/standard:7.0
+    Description: CodeBuild container image.
+  ComputeType:
+    Type: String
+    Default: BUILD_GENERAL1_SMALL
+    AllowedValues: [BUILD_GENERAL1_SMALL, BUILD_GENERAL1_MEDIUM, BUILD_GENERAL1_LARGE, BUILD_GENERAL1_XLARGE]
+    Description: CodeBuild compute type.
+
+Conditions:
+  HasReleaseBucket: !Not [!Equals [!Ref ReleaseBucketName, '']]
+
+Resources:
+  # S3 bucket to store CodePipeline artifacts
+  PipelineArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  # IAM role for CodePipeline
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-codepipeline-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: codepipeline-inline
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: S3Artifacts
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:AbortMultipartUpload
+                  - s3:ListBucket
+                Resource:
+                  - !Sub ${PipelineArtifactBucket.Arn}
+                  - !Sub ${PipelineArtifactBucket.Arn}/*
+              - Sid: CodeBuildRun
+                Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StopBuild
+                Resource: '*'
+              - Sid: UseConnection
+                Effect: Allow
+                Action:
+                  - codestar-connections:UseConnection
+                Resource: !Ref GitHubConnectionArn
+
+  # IAM role for CodeBuild
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-codebuild-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: codebuild-logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  # Optional S3 write policy for release bucket (only created if ReleaseBucketName provided)
+  CodeBuildReleaseS3Policy:
+    Type: AWS::IAM::Policy
+    Condition: HasReleaseBucket
+    Properties:
+      PolicyName: codebuild-release-s3
+      Roles: [!Ref CodeBuildRole]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: WriteArtifactsToReleaseBucket
+            Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:PutObjectAcl
+              - s3:DeleteObject
+            Resource: !Sub arn:aws:s3:::${ReleaseBucketName}/*
+          - Sid: ListReleaseBucket
+            Effect: Allow
+            Action:
+              - s3:ListBucket
+            Resource: !Sub arn:aws:s3:::${ReleaseBucketName}
+
+  # CodeBuild project
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${ProjectName}-build
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: !Ref ComputeType
+        Image: !Ref BuildImage
+        PrivilegedMode: false
+        EnvironmentVariables:
+          - Name: ARTIFACT_DIR
+            Type: PLAINTEXT
+            Value: dist
+          - Name: S3_BUCKET
+            Type: PLAINTEXT
+            Value: !Ref ReleaseBucketName
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          env:
+            variables:
+              ARTIFACT_DIR: dist
+          phases:
+            install:
+              runtime-versions:
+                golang: 1.23
+            pre_build:
+              commands:
+                - go version
+                - go mod download
+                - go vet ./...
+                - echo "Checking formatting..."
+                - |
+                  DIFF=$(gofmt -s -l .)
+                  if [ -n "$DIFF" ]; then
+                    echo "Files need gofmt:" && echo "$DIFF" && exit 1
+                  fi
+            build:
+              commands:
+                - mkdir -p "$ARTIFACT_DIR"
+                - echo "Building for linux/amd64..."
+                - GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/gocomic-linux-amd64" ./cmd/gocomic
+                - echo "Building for windows/amd64..."
+                - GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/gocomic-windows-amd64.exe" ./cmd/gocomic
+            post_build:
+              commands:
+                - |
+                  # Try to derive a tag name; if not a tag, fall back to build number
+                  if [[ "$CODEBUILD_RESOLVED_SOURCE_VERSION" =~ ^refs/tags/ ]]; then
+                    TAG=${CODEBUILD_RESOLVED_SOURCE_VERSION#refs/tags/}
+                  elif [[ -n "$CODEBUILD_WEBHOOK_TRIGGER" && "$CODEBUILD_WEBHOOK_TRIGGER" == tag/* ]]; then
+                    TAG=${CODEBUILD_WEBHOOK_TRIGGER#tag/}
+                  else
+                    TAG=build-${CODEBUILD_BUILD_NUMBER}
+                  fi
+                  echo "Tag: $TAG"
+                - |
+                  if [ -n "$S3_BUCKET" ]; then
+                    echo "Uploading artifacts to s3://$S3_BUCKET/releases/$TAG/"
+                    aws s3 sync "$ARTIFACT_DIR/" "s3://$S3_BUCKET/releases/$TAG/"
+                  else
+                    echo "S3_BUCKET not set; skipping upload"
+                  fi
+          artifacts:
+            files:
+              - dist/**/*
+      TimeoutInMinutes: 30
+
+  # CodePipeline definition
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Ref PipelineName
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref PipelineArtifactBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              Configuration:
+                ConnectionArn: !Ref GitHubConnectionArn
+                FullRepositoryId: !Sub ${GitHubOwner}/${GitHubRepo}
+                BranchName: !Ref BranchName
+                OutputArtifactFormat: CODE_ZIP
+                DetectChanges: true
+              OutputArtifacts:
+                - Name: SourceArtifact
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: Build
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BuildOutput
+              RunOrder: 1
+
+Outputs:
+  PipelineNameOut:
+    Description: Name of the created CodePipeline
+    Value: !Ref Pipeline
+  ArtifactBucketName:
+    Description: Name of the S3 bucket used for CodePipeline artifacts
+    Value: !Ref PipelineArtifactBucket
+  CodeBuildProjectName:
+    Description: Name of the CodeBuild project
+    Value: !Ref CodeBuildProject
