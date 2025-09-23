@@ -37,7 +37,7 @@ Parameters:
     Description: GitHub repository name, e.g., gocomicwriter
   BranchName:
     Type: String
-    Default: main
+    Default: master
     Description: Branch to track for CI builds.
   ReleaseBucketName:
     Type: String
@@ -205,10 +205,10 @@ Resources:
             build:
               commands:
                 - mkdir -p "$ARTIFACT_DIR"
-                - echo "Building for linux/amd64..."
-                - GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/gocomic-linux-amd64" ./cmd/gocomic
-                - echo "Building for windows/amd64..."
-                - GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/gocomic-windows-amd64.exe" ./cmd/gocomic
+                - echo "Building UI (fyne tag) for linux/amd64 (nocgo stub in CI)..."
+                - GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags fyne -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/gocomicwriter-ui-linux-amd64" ./cmd/gocomicwriter
+                - echo "Building UI (fyne tag) for windows/amd64 (nocgo stub in CI)..."
+                - GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags fyne -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/gocomicwriter-ui-windows-amd64.exe" ./cmd/gocomicwriter
             post_build:
               commands:
                 - |
