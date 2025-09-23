@@ -6,7 +6,6 @@ require (
 	fyne.io/fyne/v2 v2.6.3
 	github.com/xeipuuv/gojsonschema v1.2.0
 	golang.org/x/image v0.31.0
-	golang.org/x/mod v0.28.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
