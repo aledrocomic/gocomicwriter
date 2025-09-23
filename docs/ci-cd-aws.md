@@ -1,277 +1,152 @@
-# CI/CD on AWS for gocomic using GitHub as VCS
+# AWS CI/CD with CodePipeline for gocomicwriter
 
-This guide walks you through setting up a production‑ready CI/CD pipeline for this Go CLI project (gocomic) with GitHub as your VCS and AWS for artifact hosting. It includes:
+This document describes how to set up CI/CD for this repository on AWS using the provided CloudFormation template at docs/aws-codepipeline.yml. It assumes you want an AWS‑native pipeline (CodePipeline + CodeBuild) with GitHub (via CodeStar Connections) as the source.
 
-- Continuous Integration (build, vet, formatting, module hygiene)
-- Release builds for multiple OS/architectures
-- Publishing artifacts to GitHub Releases and optionally to an S3 bucket (via OIDC – no long‑lived AWS keys)
-- An alternative AWS‑native setup using CodePipeline + CodeBuild
+What you get when you deploy the template:
+- An S3 bucket for CodePipeline artifacts (versioned, encrypted, retained on stack deletion)
+- An IAM role for CodePipeline (least privilege)
+- An IAM role for CodeBuild (least privilege)
+- A CodeBuild project with an inline buildspec that:
+  - Uses Go 1.23
+  - Runs vet and formatting checks
+  - Builds binaries for linux/amd64 and windows/amd64
+  - Optionally uploads build artifacts to an S3 “release” bucket
+- A CodePipeline with two stages: Source (GitHub) and Build (CodeBuild)
 
-If you simply want a working pipeline fast, follow Steps 1–4 and use the provided GitHub Actions workflows.
+Important defaults/assumptions:
+- Region: deploy this stack in eu-west-1 (Ireland) as indicated in the template comments.
+- Source: GitHub via an existing CodeStar Connection (you supply its ARN).
+- Optional S3 upload: provide an S3 bucket name to publish releases; otherwise upload is skipped.
 
----
+Note about repo paths and binary names:
+- The current CLI entry point in this repo is ./cmd/gocomicwriter. The template’s inline buildspec currently builds from ./cmd/gocomic and names artifacts gocomic-*. If your repo uses ./cmd/gocomicwriter (as this one does), adjust those two build lines in the template after deployment or update the template before deploying. See “Adjusting build paths/names” below.
 
-## 0) What you’ll build
 
-- CI on every pull request and push: verifies module integrity, formatting, vets code, and builds the binary
-- CD on a git tag like `v0.1.0`: builds cross‑platform binaries, attaches them to a GitHub Release, and optionally mirrors them to S3
+1) Prerequisites
+- AWS account with permissions to create IAM roles, S3 buckets, CodeBuild, and CodePipeline
+- AWS CLI v2 configured for the target account
+- A GitHub repository that contains this code
+- A CodeStar Connection to GitHub in eu-west-1
+  - In the AWS Console: Developer Tools → Connections → Create connection → GitHub → Follow the OAuth steps
+  - When done, copy the Connection ARN; you’ll pass it to the stack as GitHubConnectionArn
 
-Project specifics:
-- Module: `gocomicwriter`
-- Entry point: `./cmd/gocomicwriter`
-- Go version: `1.23`
-- No tests at the moment; CI focuses on fast sanity checks
 
----
+2) Parameters you will provide
+- ProjectName: logical name for created resources (default gocomicwriter)
+- PipelineName: CodePipeline name (default gocomicwriter-pipeline)
+- GitHubConnectionArn: ARN of the CodeStar connection you created (required)
+- GitHubOwner: GitHub org/user that owns the repo (e.g., alexa)
+- GitHubRepo: Repository name (e.g., gocomicwriter)
+- BranchName: branch to track (default main)
+- ReleaseBucketName: optional S3 bucket to upload artifacts to (leave empty to skip S3 uploads)
+- BuildImage: CodeBuild image (default aws/codebuild/standard:7.0)
+- ComputeType: CodeBuild size (default BUILD_GENERAL1_SMALL)
 
-## 1) Prerequisites
 
-- An AWS account and permissions to create IAM roles, S3 buckets, and optionally CloudFront distributions
-- A GitHub repository containing this project
-- Admin access to configure GitHub Actions and repository variables/secrets
+3) Deploy the stack (recommended: AWS CLI)
+Example using the AWS CLI from the repository root:
 
----
+PowerShell (Windows):
 
-## 2) Create an S3 bucket for release artifacts (optional but recommended)
+aws cloudformation deploy `
+  --region eu-west-1 `
+  --stack-name gocomicwriter-pipeline `
+  --template-file docs/aws-codepipeline.yml `
+  --capabilities CAPABILITY_NAMED_IAM `
+  --parameter-overrides `
+    ProjectName=gocomicwriter `
+    PipelineName=gocomicwriter-pipeline `
+    GitHubConnectionArn=arn:aws:codestar-connections:eu-west-1:<ACCOUNT_ID>:connection/<ID> `
+    GitHubOwner=<GITHUB_OWNER> `
+    GitHubRepo=gocomicwriter `
+    BranchName=main `
+    ReleaseBucketName=<optional-s3-bucket-name-or-empty>
 
-If you want artifacts also available from AWS (in addition to GitHub Releases):
+Bash (macOS/Linux):
 
-- Choose an S3 bucket name (e.g., `gocomicwriter-artifacts-<account-id>-<region>`)
-- Create the bucket in your preferred region
-- If you plan to serve files publicly, enable public read for objects via a bucket policy or serve via CloudFront. Example minimal bucket policy (public read of objects):
+aws cloudformation deploy \
+  --region eu-west-1 \
+  --stack-name gocomicwriter-pipeline \
+  --template-file docs/aws-codepipeline.yml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides \
+    ProjectName=gocomicwriter \
+    PipelineName=gocomicwriter-pipeline \
+    GitHubConnectionArn=arn:aws:codestar-connections:eu-west-1:<ACCOUNT_ID>:connection/<ID> \
+    GitHubOwner=<GITHUB_OWNER> \
+    GitHubRepo=gocomicwriter \
+    BranchName=main \
+    ReleaseBucketName=<optional-s3-bucket-name-or-empty>
 
-```
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "PublicReadGetObject",
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::gocomicwriter-artifacts-<account-id>-<region>/*"
-    }
-  ]
-}
-```
+Notes:
+- The stack creates a dedicated S3 bucket for pipeline artifacts (retained on delete). If you later delete the stack, you must empty this bucket manually before deleting it.
+- CAPABILITY_NAMED_IAM is required because the stack creates IAM roles.
 
-Tip: Prefer CloudFront for production distribution and keep the bucket private, granting the CI role write access and CloudFront the read origin access.
 
----
+4) How the pipeline works
+- Source stage: Monitors the specified GitHub branch via the CodeStar connection. DetectChanges is enabled; pushes to the branch will start the pipeline automatically.
+- Build stage: Triggers the CodeBuild project defined by the stack.
+  - Buildspec highlights:
+    - install: Go 1.23 runtime
+    - pre_build: go version, go mod download, go vet, gofmt check (fails if any file needs formatting)
+    - build: cross‑compile for linux/amd64 and windows/amd64 into the dist/ directory
+    - post_build: attempts to derive a release tag; if none, falls back to build-<build-number>
+      - If ReleaseBucketName is provided, dist/ is uploaded to s3://<bucket>/releases/<tag-or-build>/
+  - Artifacts: dist/**/* is emitted to CodePipeline as BuildOutput
 
-## 3) Configure GitHub OIDC access to AWS (no long‑lived keys)
+Where to find results:
+- CodeBuild logs: CloudWatch Logs for the CodeBuild project named <ProjectName>-build
+- Pipeline artifacts: the S3 bucket created by the stack (ArtifactStore)
+- Optional releases in S3: s3://<ReleaseBucketName>/releases/<tag-or-build>/
 
-Using GitHub’s OIDC provider allows GitHub Actions to assume an IAM role in your AWS account without storing static AWS keys.
 
-### 3.1 Add GitHub OIDC provider (one‑time per account)
+5) Adjusting build paths/names (if your CLI path differs)
+If your CLI lives at ./cmd/gocomicwriter (this repo) instead of ./cmd/gocomic (what the template’s default buildspec uses), change the two build commands in the inline BuildSpec within the stack to:
+- GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/gocomicwriter-linux-amd64" ./cmd/gocomicwriter
+- GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/gocomicwriter-windows-amd64.exe" ./cmd/gocomicwriter
 
-In IAM → Identity providers → Add provider:
-- Provider URL: `https://token.actions.githubusercontent.com`
-- Audience: `sts.amazonaws.com`
+Ways to apply the change:
+- Before first deploy: edit docs/aws-codepipeline.yml accordingly and deploy.
+- After deploy: update the stack using the same aws cloudformation deploy command with your edited template; CodeBuild will use the new commands for subsequent runs.
 
-If your account already has this provider, you can reuse it.
 
-### 3.2 Create an IAM role for GitHub Actions
+6) Optional: preparing an S3 release bucket
+If you want CodeBuild to upload artifacts to S3 (post_build step), create a bucket and pass its name as ReleaseBucketName. The stack attaches least‑privilege permissions for CodeBuild to write to that bucket.
+- Example bucket name: gocomicwriter-artifacts-<account-id>-eu-west-1
+- Objects will be written under releases/<tag-or-build>/
+- Public access is not required; you can keep the bucket private and share internally, or front it with CloudFront if you need public distribution.
 
-- IAM → Roles → Create role → Web identity
-- Identity provider: `token.actions.githubusercontent.com`
-- Audience: `sts.amazonaws.com`
-- Add a trust policy that limits which repo/branches/tags can assume the role (replace `OWNER` and `REPO`):
 
-  Important:
-  - Paste the JSON below into the role’s Trust relationships policy (when creating the role or on the role page → Trust relationships → Edit). Do not attach it as a permissions policy or a bucket policy. If the console complains about a missing Resource field, you’re in the wrong editor.
-  - If you see “Unsupported principal” or “Invalid principal” errors, make sure you completed Step 3.1 to create the OIDC provider and that the ARN matches exactly: `arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com`. Also replace `<ACCOUNT_ID>`, `OWNER`, and `REPO` with your actual values.
+7) Updating or deleting the pipeline
+- Update configuration: edit docs/aws-codepipeline.yml and re‑run the aws cloudformation deploy command with the same stack name.
+- Delete: delete the CloudFormation stack. The artifact bucket uses DeletionPolicy: Retain; empty and delete it separately if you want it gone.
 
-```
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "Federated": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com"
-      },
-      "Action": "sts:AssumeRoleWithWebIdentity",
-      "Condition": {
-        "StringEquals": {
-          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-        },
-        "StringLike": {
-          "token.actions.githubusercontent.com:sub": [
-            "repo:OWNER/REPO:ref:refs/heads/main",
-            "repo:OWNER/REPO:ref:refs/heads/*",
-            "repo:OWNER/REPO:ref:refs/tags/v*"
-          ]
-        }
-      }
-    }
-  ]
-}
-```
 
-- Attach a least‑privilege permissions policy. For S3 publishing and optional CloudFront invalidation:
+8) Troubleshooting
+- Source stage stuck in “Retry” or “Not connected”:
+  - Ensure the CodeStar Connection is in “Connected” status in eu-west-1 and that the GitHub repo/branch names match the parameters.
+- AccessDenied uploading to the release bucket:
+  - Confirm you passed ReleaseBucketName and that the bucket exists in the same account/region; the stack adds write permissions to that exact bucket only.
+- Build fails on formatting step:
+  - Run gofmt -s -w . locally and push again.
+- Build cannot find package ./cmd/gocomic:
+  - Update the build commands to point to ./cmd/gocomicwriter as described above.
+- Go toolchain version:
+  - The template requests Go 1.23 on the aws/codebuild/standard:7.0 image. If AWS updates images and the version label changes, adjust the runtime-versions section or BuildImage parameter.
 
-```
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "WriteArtifactsToBucket",
-      "Effect": "Allow",
-      "Action": ["s3:PutObject", "s3:PutObjectAcl", "s3:DeleteObject"],
-      "Resource": "arn:aws:s3:::gocomicwriter-artifacts-<account-id>-<region>/*"
-    },
-    {
-      "Sid": "ListBucket",
-      "Effect": "Allow",
-      "Action": ["s3:ListBucket"],
-      "Resource": "arn:aws:s3:::gocomicwriter-artifacts-<account-id>-<region>"
-    },
-    {
-      "Sid": "InvalidateCloudFront",
-      "Effect": "Allow",
-      "Action": ["cloudfront:CreateInvalidation"],
-      "Resource": "*"
-    }
-  ]
-}
-```
 
-Record the role ARN, e.g., `arn:aws:iam::<ACCOUNT_ID>:role/github-actions-gocomicwriter`.
+9) Customizing the pipeline
+- Add tests: insert go test ./... into the build phase as needed.
+- Change compute size or image: use ComputeType and BuildImage parameters.
+- Add more stages (e.g., deployment): extend the CodePipeline Stages section in the template.
+- Tag‑triggered releases: the buildspec already tries to detect tags; push an annotated tag (e.g., v0.1.0) to create a release folder in S3 when ReleaseBucketName is set.
 
----
 
-## 4) Configure GitHub repository variables
+10) Clean up costs
+- CodePipeline and CodeBuild incur small charges when running; S3 storage for artifacts and logs may persist. Clean up by deleting the stack and emptying S3 buckets when no longer needed.
 
-In GitHub → Settings → Secrets and variables → Actions:
 
-- Secrets
-  - `AWS_ROLE_ARN` = your IAM role ARN
-- Variables (or use Secrets if you prefer)
-  - `AWS_REGION` = e.g., `eu-central-1`
-  - `S3_BUCKET` = your S3 bucket name (if using S3 publish)
-
-Optionally protect the `main` branch and require the CI workflow to pass before merging.
-
----
-
-## 5) Add the CI workflow (build, vet, formatting, tidy check)
-
-A workflow is provided at `.github/workflows/ci.yml`. It runs on pushes and PRs and will:
-- Set up Go 1.23
-- Cache modules
-- Ensure `go mod tidy` would not change files
-- Fail on formatting diffs
-- `go vet`
-- Build the project
-
-If you need additional linters (e.g., staticcheck), you can add them later.
-
----
-
-## 6) Add the Release workflow (build multi‑platform and publish)
-
-A workflow is provided at `.github/workflows/release.yml`. It triggers on tags starting with `v`, e.g., `v0.1.0` and will:
-- Cross‑compile for Linux, Windows, and macOS (amd64 and arm64 where applicable)
-- Package artifacts
-- Create or update a GitHub Release and attach artifacts
-- Optionally publish artifacts to S3 under `s3://$S3_BUCKET/releases/<tag>/`
-
-Note on versioning: the project currently has a compile‑time constant `internal/version.Version`. To change the printed version, bump it in code before tagging a release. The workflow does not attempt to override it via ldflags because it’s declared as a const.
-
----
-
-## 7) Cut your first release
-
-1) Update `internal/version/version.go` with the new version string
-2) Commit and push to `main`
-3) Create a tag and push it:
-
-```
-# choose your version
-VER=v0.1.0
-
-git tag "$VER"
-git push origin "$VER"
-```
-
-4) Watch the Actions tab: the release workflow should build, publish a GitHub Release, and (optionally) upload to S3
-
----
-
-## 8) (Optional) AWS‑native alternative: CodePipeline + CodeBuild
-
-If you prefer AWS to orchestrate builds/deployments, you can:
-
-- Create a CodePipeline with GitHub (v2) as the source (connect your GitHub repo)
-- Add a CodeBuild project with the following `buildspec.yml` at the repository root or point CodeBuild to the inline spec
-
-Example `buildspec.yml` (build and publish to S3 on tags):
-
-```
-version: 0.2
-env:
-  variables:
-    ARTIFACT_DIR: dist
-phases:
-  install:
-    runtime-versions:
-      golang: 1.23
-  pre_build:
-    commands:
-      - go version
-      - go mod download
-      - go vet ./...
-      - echo "Checking formatting..."
-      - |
-        DIFF=$(gofmt -s -l .)
-        if [ -n "$DIFF" ]; then
-          echo "Files need gofmt:" && echo "$DIFF" && exit 1
-        fi
-  build:
-    commands:
-      - mkdir -p "$ARTIFACT_DIR"
-      - echo "Building for linux/amd64..."
-      - GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/gocomicwriter-linux-amd64" ./cmd/gocomicwriter
-      - echo "Building for windows/amd64..."
-      - GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/gocomicwriter-windows-amd64.exe" ./cmd/gocomicwriter
-  post_build:
-    commands:
-      - |
-        if [[ "$CODEBUILD_RESOLVED_SOURCE_VERSION" =~ ^refs/tags/ ]]; then
-          TAG=${CODEBUILD_RESOLVED_SOURCE_VERSION#refs/tags/}
-        else
-          TAG=build-${CODEBUILD_BUILD_NUMBER}
-        fi
-        echo "Tag: $TAG"
-      - |
-        if [ -n "$S3_BUCKET" ]; then
-          aws s3 sync "$ARTIFACT_DIR/" "s3://$S3_BUCKET/releases/$TAG/" --acl public-read
-        else
-          echo "S3_BUCKET not set; skipping upload"
-        fi
-artifacts:
-  files:
-    - dist/**/*
-```
-
-In CodeBuild environment variables, set `S3_BUCKET` and assign an IAM role with S3 write permissions similar to the policy above.
-
----
-
-## 9) Operations, rollbacks, and security
-
-- Branch protections: require the CI workflow on `main`
-- Environments: use GitHub Environments (e.g., `prod`) to gate the release job with approvals
-- Rollback: create a new tag pointing to the previous commit; the workflow will republish artifacts for that tag
-- Least privilege: scope the IAM role trust policy to your repo/branches/tags; scope permissions only to your S3 bucket and optional CloudFront distribution
-- SBOM/signing: consider adding `go version` metadata, SBOM (e.g., `syft`), and signing (e.g., Sigstore/cosign) later
-
----
-
-## 10) Files added by this guide
-
-- `.github/workflows/ci.yml` — CI on push/PR
-- `.github/workflows/release.yml` — Release on tags, publish to GitHub Releases and optional S3
-
-You can tailor the matrices, add more linters, or integrate other distribution channels as needed.
+Appendix: File locations
+- Template: docs/aws-codepipeline.yml
+- CLI entry point (current repo): cmd/gocomicwriter/main.go
+- Version string: internal/version/version.go
