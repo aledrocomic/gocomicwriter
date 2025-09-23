@@ -136,6 +136,23 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: '*'
+        - PolicyName: codebuild-artifacts-s3
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AllowReadWriteArtifactsBucketObjects
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource: !Sub ${PipelineArtifactBucket.Arn}/*
+              - Sid: AllowListArtifactsBucket
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource: !Sub ${PipelineArtifactBucket.Arn}
 
   # Optional S3 write policy for release bucket (only created if ReleaseBucketName provided)
   CodeBuildReleaseS3Policy:
