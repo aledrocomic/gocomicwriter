@@ -1,4 +1,4 @@
-# Go Comic Writer (gocomicwriter)
+# Go Comic Writer
 
 A Go-powered project aiming to become a writing, planning, and lettering toolchain for comics — from script to precisely lettered pages — with reliable exports for print and screen.
 
@@ -36,7 +36,7 @@ The long‑term plan is a desktop application with a canvas editor and exporters
 - Crash safety: on panic, write a crash report and autosave snapshot; on open, fall back to the latest valid backup if the manifest is unreadable.
 - Structured logging via Go's slog with simple env configuration; optional rotating file via GCW_LOG_FILE.
 - Core domain model in internal/domain and a public JSON schema at docs/comic.schema.json.
-- Basic desktop UI shell (behind build tag `fyne`) with a placeholder canvas editor that shows page/trim/bleed guides, simple pan/zoom, and File→Open/Save.
+- Basic desktop UI shell (behind build tag `fyne`) with a placeholder canvas editor that shows page/trim/bleed guides, simple pan/zoom, and File→New/Open/Save. The UI can start without a project and lets you create one from within the app.
 - Sample project manifest at tmp_proj/comic.json (with backups under tmp_proj/backups/).
 - Unit tests for core packages (storage, logging, crash, version, schema).
 
@@ -106,7 +106,12 @@ The repository includes a minimal desktop UI shell guarded by the `fyne` build t
 Build and run directly (no binary):
 
 ```bash
-# Open the sample project (Windows PowerShell)
+# Start the UI with no project (Windows PowerShell)
+go run -tags fyne ./cmd/gocomicwriter ui
+# Use File → New to create a project, or File → Open to open an existing one.
+
+# Alternatively, open the sample project directly
+# Windows PowerShell
 go run -tags fyne ./cmd/gocomicwriter ui .\tmp_proj
 
 # On macOS/Linux
