@@ -281,8 +281,40 @@ Highlights:
 - Deterministic exporters: PDF, PNG/SVG, CBZ
 
 ## CI/CD and releases
-- CI: not configured yet.
-- Releases: not configured yet; will be added once usable milestones are reached.
+
+AWS CI/CD (CodePipeline):
+- A ready-to-deploy AWS pipeline is provided as a CloudFormation template at docs/aws-codepipeline.yml. It creates:
+  - A versioned, encrypted S3 bucket for pipeline artifacts (retained on stack deletion)
+  - Least-privilege IAM roles for CodePipeline and CodeBuild
+  - A CodeBuild project (Go 1.23; vet + formatting check; builds linux/amd64 and windows/amd64; optional S3 publish)
+  - A CodePipeline with two stages: Source (GitHub via CodeStar Connections) and Build (CodeBuild)
+- Full setup and operations guide: docs/ci-cd-aws.md
+
+Quick deploy (PowerShell, run from the repo root):
+
+```powershell
+aws cloudformation deploy `
+  --region eu-west-1 `
+  --stack-name gocomicwriter-pipeline `
+  --template-file docs/aws-codepipeline.yml `
+  --capabilities CAPABILITY_NAMED_IAM `
+  --parameter-overrides `
+    ProjectName=gocomicwriter `
+    PipelineName=gocomicwriter-pipeline `
+    GitHubConnectionArn=arn:aws:codestar-connections:eu-west-1:<ACCOUNT_ID>:connection/<ID> `
+    GitHubOwner=<GITHUB_OWNER> `
+    GitHubRepo=gocomicwriter `
+    BranchName=<branch> `
+    ReleaseBucketName=<optional-s3-bucket-or-empty>
+```
+
+Notes:
+- You must have a CodeStar Connection to GitHub in eu-west-1 and pass its ARN as GitHubConnectionArn.
+- To publish artifacts to S3, create a bucket and pass its name as ReleaseBucketName; otherwise S3 upload is skipped.
+- If your build entry point differs from the template defaults, see “Adjusting build paths/names” in docs/ci-cd-aws.md.
+
+Optional GitHub Actions:
+- This repo also contains .github/workflows/ci.yml and release.yml for GitHub-native CI and tag-based releases. See docs/ci-cd-aws.md for details on the release workflow and optional S3 publishing via OIDC.
 
 ## Contributing and conduct
 Contributions are welcome once core foundations stabilize. Until then, feel free to:
