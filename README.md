@@ -37,6 +37,12 @@ The long‑term plan is a desktop application with a canvas editor and exporters
 - Structured logging via Go's slog with simple env configuration; optional rotating file via GCW_LOG_FILE.
 - Core domain model in internal/domain and a public JSON schema at docs/comic.schema.json.
 - Basic desktop UI shell (behind build tag `fyne`) with a placeholder canvas editor that shows page/trim/bleed guides, simple pan/zoom, and File→New/Open/Save. The UI can start without a project and lets you create one from within the app.
+- Issue setup dialog: configure trim size, bleed, DPI, and reading direction (LTR/RTL) from the UI.
+- Grid templates and custom grids per page: choose from presets (e.g., 3x3) or enter a custom spec; apply per page.
+- Panels: create rectangular panels on the page canvas, reorder their Z position (front/back), and edit basic metadata (ID, notes).
+- Script integration (experimental): structured editor with outline and beat tagging; beats can be linked to panels; unmapped beat warnings in outline.
+- Beat coverage overlay and page‑turn pacing indicators (experimental) in the canvas to aid layout/planning.
+- About menu with environment info (Go version, OS/arch, cgo/fyne status) for diagnostics.
 - Sample project manifest at tmp_proj/comic.json (with backups under tmp_proj/backups/).
 - Unit tests for core packages (storage, logging, crash, version, schema).
 
@@ -135,7 +141,17 @@ bin/gocomicwriter-ui ui ./tmp_proj
 ```
 
 Notes and controls:
-- File → Open to select a project folder; File → Save writes comic.json (with a timestamped backup of the previous manifest).
+- File → New creates a new project from the UI; File → Open selects a project folder; File → Save writes comic.json (with a timestamped backup of the previous manifest).
+- Issue → Setup opens the Issue Setup dialog (trim size, bleed, DPI, reading direction). Changes apply to the current issue.
+- Issue → Grid lets you apply a grid template or enter a custom grid spec for the current page.
+  - Grid spec format: Rows x Cols with optional margins/gutters, e.g., `3x3`, `2x3 m:5mm g:4mm`. Custom specs are parsed and drawn on the canvas.
+- Panels: use the toolbar or context menu to create a panel; select a panel to see transform handles.
+  - Drag to move; corner handles to scale; rotation handle above to rotate.
+  - Panels maintain a Z‑order; use Bring Forward/Send Backward to reorder.
+  - Edit panel metadata (ID, notes) from the side panel or a dialog.
+- Script integration: beats (from the Script tab) can be linked to selected panels; unmapped beats are highlighted in the outline.
+- Overlays: toggle Beat Coverage and Page‑Turn Pacing indicators from the View/Overlays menu.
+- About → About Go Comic Writer shows environment info (version, OS/arch, cgo/fyne) useful for troubleshooting.
 - Center canvas shows a page rectangle with bleed (blue) and trim (red) guides.
 - Drag with mouse to pan.
 - Ctrl + Mouse Wheel to zoom in/out.
@@ -240,7 +256,7 @@ A minimal example comic.json:
 }
 ```
 
-Note: The schema defines richer structures for pages, panels, balloons, styles, etc. See docs/comic.schema.json for all fields.
+Note: The schema defines richer structures for pages, panels, balloons, styles, etc. For example, panels include fields like `id`, `zOrder`, `geometry {x,y,width,height}`, optional `notes`, and `linkedBeats` (array of beat IDs like `b:42`). See docs/comic.schema.json for all fields.
 
 A sample work‑in‑progress manifest lives at tmp_proj/comic.json (with automatic timestamped backups under tmp_proj/backups/).
 
