@@ -42,7 +42,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23.x'
+          go-version: '1.24.x'
           cache: true
 
       - name: Prepare
@@ -56,14 +56,14 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          BIN="gocomic-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
-          go build -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/$BIN" ./cmd/gocomic
+          BIN="gocomicwriter-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
+          go build -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/$BIN" ./cmd/gocomicwriter
 
       - name: Package
         run: |
           cd "$ARTIFACT_DIR"
-          BIN="gocomic-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
-          PKG_PREFIX="gocomic_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          BIN="gocomicwriter-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}"
+          PKG_PREFIX="gocomicwriter_${{ env.VERSION }}_${{ matrix.goos }}_${{ matrix.goarch }}"
           if [ "${{ matrix.ext }}" = ".exe" ]; then
             zip -9 "$PKG_PREFIX.zip" "$BIN"
             echo "PACKAGE=$PKG_PREFIX.zip" >> $GITHUB_ENV
