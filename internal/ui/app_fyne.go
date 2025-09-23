@@ -18,6 +18,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -45,7 +47,7 @@ func Run(projectDir string) error {
 	var ph *storage.ProjectHandle
 	defer func() { crash.Recover(ph) }()
 
-	fyneApp := app.New()
+	fyneApp := app.NewWithID("gocomicwriter")
 	w := fyneApp.NewWindow("Go Comic Writer")
 	w.Resize(fyne.NewSize(1200, 800))
 
@@ -54,7 +56,164 @@ func Run(projectDir string) error {
 
 	// Canvas layout panes
 	left := container.NewVBox(widget.NewLabel("Pages"), widget.NewSeparator(), widget.NewLabel("(placeholder)"))
-	right := container.NewVBox(widget.NewLabel("Inspector"), widget.NewSeparator(), widget.NewLabel("(placeholder)"))
+	// Panel inspector (right)
+	panelDisplay := []string{}
+	panelIDs := []string{}
+	selectedPanel := -1
+	panelList := widget.NewList(
+		func() int { return len(panelDisplay) },
+		func() fyne.CanvasObject { return widget.NewLabel("") },
+		func(i widget.ListItemID, o fyne.CanvasObject) { o.(*widget.Label).SetText(panelDisplay[i]) },
+	)
+	panelList.OnSelected = func(id widget.ListItemID) { selectedPanel = int(id) }
+	// Pacing/overlay UI controls
+	pacingLabel := widget.NewLabel("")
+	beatOverlayCheck := widget.NewCheck("Beat Coverage Overlay", func(v bool) {
+		canvasWidget.beatOverlay = v
+		// Re-render current page if available
+		if ph != nil && len(ph.Project.Issues) > 0 && len(ph.Project.Issues[0].Pages) > 0 {
+			canvasWidget.ShowPanels(ph.Project.Issues[0].Pages[0])
+		}
+	})
+	refreshPanelsUI := func() {
+		panelDisplay = panelDisplay[:0]
+		panelIDs = panelIDs[:0]
+		if ph == nil || len(ph.Project.Issues) == 0 || len(ph.Project.Issues[0].Pages) == 0 {
+			panelList.Refresh()
+			pacingLabel.SetText("")
+			return
+		}
+		pg := ph.Project.Issues[0].Pages[0]
+		// sort by zOrder
+		panels := append([]domain.Panel(nil), pg.Panels...)
+		sort.Slice(panels, func(i, j int) bool { return panels[i].ZOrder < panels[j].ZOrder })
+		for _, p := range panels {
+			panelIDs = append(panelIDs, p.ID)
+			d := fmt.Sprintf("z:%d %s (%.0fx%.0f @%.0f,%.0f)", p.ZOrder, p.ID, p.Geometry.Width, p.Geometry.Height, p.Geometry.X, p.Geometry.Y)
+			if strings.TrimSpace(p.Notes) != "" {
+				d += " — " + p.Notes
+			}
+			panelDisplay = append(panelDisplay, d)
+		}
+		panelList.Refresh()
+		// Update canvas rendering from model
+		if len(pg.Panels) > 0 {
+			canvasWidget.ShowPanels(pg)
+		}
+		// Update pacing info
+		iss := ph.Project.Issues[0]
+		turns := storage.ComputePageTurnIndicators(iss)
+		turnStr := ""
+		for _, ti := range turns {
+			if ti.PageNumber == pg.Number {
+				turnStr = fmt.Sprintf("Page %d — Turn:%v, Beats:%v, EndPanelBeats:%v", ti.PageNumber, ti.IsTurn, ti.HasBeats, ti.LastPanelHasBeats)
+				break
+			}
+		}
+		cov := storage.ComputeBeatCoverage(ph.Project)
+		total := 0
+		for _, c := range cov {
+			if c.PageNumber == pg.Number {
+				total = c.TotalBeats
+				break
+			}
+		}
+		if turnStr != "" {
+			pacingLabel.SetText(turnStr + fmt.Sprintf("; TotalBeats:%d", total))
+		} else {
+			pacingLabel.SetText(fmt.Sprintf("Page %d — TotalBeats:%d", pg.Number, total))
+		}
+	}
+	btnAddPanel := widget.NewButton("Add Panel", func() {
+		if ph == nil {
+			return
+		}
+		if _, err := storage.AddPanel(ph, 1, domain.Panel{}); err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		if err := storage.Save(ph); err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		refreshPanelsUI()
+		status.SetText("Panel added.")
+	})
+	btnUp := widget.NewButton("Move Up", func() {
+		if ph == nil || selectedPanel < 0 || selectedPanel >= len(panelIDs) {
+			return
+		}
+		id := panelIDs[selectedPanel]
+		if err := storage.MovePanelZ(ph, 1, id, +1); err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		if err := storage.Save(ph); err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		refreshPanelsUI()
+	})
+	btnDown := widget.NewButton("Move Down", func() {
+		if ph == nil || selectedPanel < 0 || selectedPanel >= len(panelIDs) {
+			return
+		}
+		id := panelIDs[selectedPanel]
+		if err := storage.MovePanelZ(ph, 1, id, -1); err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		if err := storage.Save(ph); err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		refreshPanelsUI()
+	})
+	btnEdit := widget.NewButton("Edit Metadata", func() {
+		if ph == nil || selectedPanel < 0 || selectedPanel >= len(panelIDs) {
+			return
+		}
+		id := panelIDs[selectedPanel]
+		// fetch current values
+		pg := ph.Project.Issues[0].Pages[0]
+		var cur domain.Panel
+		for _, p := range pg.Panels {
+			if p.ID == id {
+				cur = p
+				break
+			}
+		}
+		idEntry := widget.NewEntry()
+		idEntry.SetText(cur.ID)
+		notesEntry := widget.NewMultiLineEntry()
+		notesEntry.SetText(cur.Notes)
+		form := dialog.NewForm("Panel Metadata", "Save", "Cancel", []*widget.FormItem{
+			widget.NewFormItem("ID", idEntry),
+			widget.NewFormItem("Notes", notesEntry),
+		}, func(ok bool) {
+			if !ok {
+				return
+			}
+			newID := strings.TrimSpace(idEntry.Text)
+			if err := storage.UpdatePanelMeta(ph, 1, id, newID, notesEntry.Text); err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			if err := storage.Save(ph); err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			refreshPanelsUI()
+			status.SetText("Panel updated.")
+		}, w)
+		form.Show()
+	})
+	right := container.NewBorder(nil, nil, nil, nil, container.NewVBox(
+		widget.NewLabel("Inspector"), widget.NewSeparator(),
+		pacingLabel, beatOverlayCheck, widget.NewSeparator(),
+		widget.NewLabel("Panels (Page 1)"), panelList,
+		container.NewHBox(btnAddPanel, btnUp, btnDown, btnEdit),
+	))
 	canvasCenter := container.NewMax(canvasWidget)
 	canvasPane := container.NewBorder(nil, nil, left, right, canvasCenter)
 
@@ -470,6 +629,8 @@ func Run(projectDir string) error {
 				scriptEntry.SetText("")
 				updateOutline("")
 				refreshBible()
+				// Prompt to set issue parameters immediately for a new project
+				showIssueSetupDialog(w, ph, canvasWidget, status, l)
 			}, w)
 			form.Show()
 		}, w)
@@ -496,6 +657,9 @@ func Run(projectDir string) error {
 					scriptEntry.SetText(txt)
 					updateOutline(txt)
 					refreshBible()
+					if len(ph.Project.Issues) > 0 {
+						canvasWidget.ApplyIssue(ph.Project.Issues[0])
+					}
 				} else {
 					l.Error("read script failed", slog.Any("err", rerr))
 				}
@@ -524,6 +688,16 @@ func Run(projectDir string) error {
 
 	fileMenu := fyne.NewMenu("File", newItem, openItem, saveItem, fyne.NewMenuItemSeparator(), exitItem)
 
+	// Issue menu with setup dialog
+	issueSetupItem := fyne.NewMenuItem("Issue Setup…", func() {
+		if ph == nil {
+			dialog.ShowInformation("Issue Setup", "No project open.", w)
+			return
+		}
+		showIssueSetupDialog(w, ph, canvasWidget, status, l)
+	})
+	issueMenu := fyne.NewMenu("Issue", issueSetupItem)
+
 	aboutItem := fyne.NewMenuItem("About Go Comic Writer", func() {
 		exe, _ := os.Executable()
 		cwd, _ := os.Getwd()
@@ -533,7 +707,7 @@ func Run(projectDir string) error {
 	})
 	aboutMenu := fyne.NewMenu("About", aboutItem)
 
-	w.SetMainMenu(fyne.NewMainMenu(fileMenu, aboutMenu))
+	w.SetMainMenu(fyne.NewMainMenu(fileMenu, issueMenu, aboutMenu))
 
 	// Try to open a project if provided
 	if projectDir != "" {
@@ -545,6 +719,10 @@ func Run(projectDir string) error {
 				scriptEntry.SetText(txt)
 				updateOutline(txt)
 				refreshBible()
+				if len(ph.Project.Issues) > 0 {
+					canvasWidget.ApplyIssue(ph.Project.Issues[0])
+				}
+				refreshPanelsUI()
 			} else {
 				l.Error("read script failed", slog.Any("err", rerr))
 			}
@@ -566,6 +744,224 @@ func openProject(dir string, ph **storage.ProjectHandle, w fyne.Window, l *slog.
 	w.SetTitle(fmt.Sprintf("Go Comic Writer — %s", h.Project.Name))
 	status.SetText(fmt.Sprintf("Opened project: %s", abs))
 	return nil
+}
+
+// showIssueSetupDialog opens a modal dialog to edit issue settings (trim, bleed, DPI, reading direction).
+// Sizes are input in millimeters, converted to points for storage.
+func showIssueSetupDialog(w fyne.Window, ph *storage.ProjectHandle, pc *PageCanvas, status *widget.Label, l *slog.Logger) {
+	var init domain.Issue
+	if len(ph.Project.Issues) > 0 {
+		init = ph.Project.Issues[0]
+	} else {
+		init = domain.Issue{
+			TrimWidth:        float64(pc.pageW),
+			TrimHeight:       float64(pc.pageH),
+			Bleed:            float64(pc.bleedMargin),
+			DPI:              300,
+			ReadingDirection: "ltr",
+			Pages:            []domain.Page{},
+		}
+	}
+	wEntry := widget.NewEntry()
+	wEntry.SetText(fmt.Sprintf("%.2f", ptToMM(init.TrimWidth)))
+	hEntry := widget.NewEntry()
+	hEntry.SetText(fmt.Sprintf("%.2f", ptToMM(init.TrimHeight)))
+	bEntry := widget.NewEntry()
+	bEntry.SetText(fmt.Sprintf("%.2f", ptToMM(init.Bleed)))
+	dpiEntry := widget.NewEntry()
+	dpiEntry.SetText(fmt.Sprintf("%d", init.DPI))
+	rdir := init.ReadingDirection
+	if strings.TrimSpace(rdir) == "" {
+		rdir = "ltr"
+	}
+	rdSelect := widget.NewSelect([]string{"ltr", "rtl"}, nil)
+	rdSelect.SetSelected(rdir)
+
+	form := dialog.NewForm("Issue Setup", "Save", "Cancel", []*widget.FormItem{
+		widget.NewFormItem("Trim Width (mm)", wEntry),
+		widget.NewFormItem("Trim Height (mm)", hEntry),
+		widget.NewFormItem("Bleed (mm)", bEntry),
+		widget.NewFormItem("DPI", dpiEntry),
+		widget.NewFormItem("Reading Direction", rdSelect),
+	}, func(ok bool) {
+		if !ok {
+			return
+		}
+		wMM, errW := strconv.ParseFloat(strings.TrimSpace(wEntry.Text), 64)
+		hMM, errH := strconv.ParseFloat(strings.TrimSpace(hEntry.Text), 64)
+		bMM, errB := strconv.ParseFloat(strings.TrimSpace(bEntry.Text), 64)
+		dpi, errD := strconv.Atoi(strings.TrimSpace(dpiEntry.Text))
+		rdirSel := rdSelect.Selected
+		if errW != nil || errH != nil || errB != nil || errD != nil || wMM <= 0 || hMM <= 0 || dpi <= 0 {
+			dialog.ShowError(fmt.Errorf("Please enter valid positive numbers for width/height/bleed and DPI."), w)
+			return
+		}
+		if rdirSel != "ltr" && rdirSel != "rtl" {
+			rdirSel = "ltr"
+		}
+		newIssue := domain.Issue{
+			TrimWidth:        mmToPT(wMM),
+			TrimHeight:       mmToPT(hMM),
+			Bleed:            mmToPT(bMM),
+			DPI:              dpi,
+			ReadingDirection: rdirSel,
+			Pages:            nil,
+		}
+		if len(ph.Project.Issues) > 0 {
+			newIssue.Pages = ph.Project.Issues[0].Pages
+			ph.Project.Issues[0] = newIssue
+		} else {
+			newIssue.Pages = []domain.Page{}
+			ph.Project.Issues = []domain.Issue{newIssue}
+		}
+		if err := storage.Save(ph); err != nil {
+			l.Error("save manifest after issue setup", slog.Any("err", err))
+			dialog.ShowError(err, w)
+			return
+		}
+		pc.ApplyIssue(newIssue)
+		status.SetText("Issue settings saved.")
+	}, w)
+	form.Show()
+}
+
+func ptToMM(pt float64) float64 { return pt * 25.4 / 72.0 }
+func mmToPT(mm float64) float64 { return mm * 72.0 / 25.4 }
+
+// parseGridSpec parses simple grid templates like "3x3" or custom key-value strings like
+// "rows:3,cols:2,mx:12,my:12,gx:6,gy:6". Units default to points; suffix "mm" is supported.
+// Returns rows, cols, margins (mx,my) and gutters (gx,gy).
+func parseGridSpec(spec string) (rows int, cols int, mx, my, gx, gy float32, ok bool) {
+	s := strings.TrimSpace(strings.ToLower(spec))
+	if s == "" {
+		return 0, 0, 0, 0, 0, 0, false
+	}
+	// Replace unicode multiplication sign
+	s = strings.ReplaceAll(s, "×", "x")
+	// Template NxM
+	if idx := strings.Index(s, "x"); idx > 0 {
+		l := strings.TrimSpace(s[:idx])
+		r := strings.TrimSpace(s[idx+1:])
+		li, errL := strconv.Atoi(l)
+		ri, errR := strconv.Atoi(r)
+		if errL == nil && errR == nil && li > 0 && ri > 0 {
+			return li, ri, 0, 0, 12, 12, true // default 12pt gutters
+		}
+	}
+	// Key-value pairs
+	pairs := strings.Split(s, ",")
+	kv := map[string]string{}
+	for _, p := range pairs {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		var k, v string
+		if i := strings.IndexAny(p, ":="); i > 0 {
+			k = strings.TrimSpace(p[:i])
+			v = strings.TrimSpace(p[i+1:])
+		} else {
+			continue
+		}
+		kv[k] = v
+	}
+	// aliases
+	parseInt := func(key string, alt string) int {
+		if val, ok := kv[key]; ok {
+			if n, e := strconv.Atoi(val); e == nil {
+				return n
+			}
+		}
+		if alt != "" {
+			if val, ok := kv[alt]; ok {
+				if n, e := strconv.Atoi(val); e == nil {
+					return n
+				}
+			}
+		}
+		return 0
+	}
+	parseMeasure := func(key string, alt string, def float32) float32 {
+		val, ok := kv[key]
+		if !ok && alt != "" {
+			val, ok = kv[alt]
+		}
+		if !ok {
+			return def
+		}
+		// support mm suffix
+		if strings.HasSuffix(val, "mm") {
+			f, e := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(val, "mm")), 64)
+			if e == nil {
+				return float32(mmToPT(f))
+			}
+		} else {
+			f, e := strconv.ParseFloat(val, 64)
+			if e == nil {
+				return float32(f)
+			}
+		}
+		return def
+	}
+	rows = parseInt("rows", "r")
+	cols = parseInt("cols", "c")
+	if rows <= 0 || cols <= 0 {
+		return 0, 0, 0, 0, 0, 0, false
+	}
+	// margins
+	m := parseMeasure("m", "margin", 0)
+	ml := parseMeasure("ml", "left", m)
+	mr := parseMeasure("mr", "right", m)
+	mt := parseMeasure("mt", "top", m)
+	mb := parseMeasure("mb", "bottom", m)
+	// If only mx/my are provided, use them symmetrical
+	tmx := parseMeasure("mx", "", 0)
+	tmy := parseMeasure("my", "", 0)
+	if tmx > 0 {
+		ml, mr = tmx, tmx
+	}
+	if tmy > 0 {
+		mt, mb = tmy, tmy
+	}
+	// Use average for single mx/my return to simplify signature
+	mx = (ml + mr) / 2
+	my = (mt + mb) / 2
+	gx = parseMeasure("gx", "gutterx", 12)
+	gy = parseMeasure("gy", "guttery", 12)
+	return rows, cols, mx, my, gx, gy, true
+}
+
+// buildGridNodes creates simple rectangle nodes covering the specified grid inside the trim area.
+// pageW/H are in points. trimMargin is the outer trim inset (points).
+func buildGridNodes(spec string, pageW, pageH, trimMargin float32) []vector.Node {
+	rows, cols, mx, my, gx, gy, ok := parseGridSpec(spec)
+	if !ok || rows <= 0 || cols <= 0 {
+		return nil
+	}
+	// inner content rect (inside trim)
+	x0 := trimMargin + mx
+	y0 := trimMargin + my
+	innerW := pageW - 2*trimMargin - 2*mx
+	innerH := pageH - 2*trimMargin - 2*my
+	if innerW <= 0 || innerH <= 0 {
+		return nil
+	}
+	cellW := (innerW - float32(cols-1)*gx) / float32(cols)
+	cellH := (innerH - float32(rows-1)*gy) / float32(rows)
+	if cellW <= 0 || cellH <= 0 {
+		return nil
+	}
+	nodes := make([]vector.Node, 0, rows*cols)
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols; c++ {
+			x := x0 + float32(c)*(cellW+gx)
+			y := y0 + float32(r)*(cellH+gy)
+			rect := vector.R(x, y, cellW, cellH)
+			n := vector.NewRect(rect, vector.Fill{Enabled: true, Color: vector.Color{R: 0, G: 0, B: 0, A: 0}}, vector.Stroke{Enabled: true, Color: vector.Color{R: 20, G: 20, B: 20, A: 255}, Width: 1})
+			nodes = append(nodes, n)
+		}
+	}
+	return nodes
 }
 
 // PageCanvas is a minimal interactive canvas placeholder that draws a page rectangle
@@ -593,6 +989,9 @@ type PageCanvas struct {
 	startXf   vector.Affine2D
 	// For scale/rotate operations
 	anchor vector.Pt
+
+	// Overlays
+	beatOverlay bool
 }
 
 // dragMode represents current interaction kind
@@ -699,6 +1098,72 @@ func (p *PageCanvas) CreateRenderer() fyne.WidgetRenderer {
 
 // PreferredSize sets a decent default size for the widget.
 func (p *PageCanvas) PreferredSize() fyne.Size { return fyne.NewSize(800, 600) }
+
+// ApplyIssue configures the canvas geometry and guides based on the issue settings.
+// The Issue values are expected in points; bleed is the outer margin beyond trim.
+// Reading direction toggles which side the inner gutter guide is drawn on.
+func (p *PageCanvas) ApplyIssue(is domain.Issue) {
+	if is.TrimWidth > 0 {
+		p.pageW = float32(is.TrimWidth)
+	}
+	if is.TrimHeight > 0 {
+		p.pageH = float32(is.TrimHeight)
+	}
+	// Bleed may be zero
+	p.bleedMargin = float32(is.Bleed)
+	// Keep existing trimMargin and gutter size for now; could be added later to Issue if needed.
+	// Gutter side based on reading direction: LTR -> left gutter, RTL -> right gutter
+	if strings.ToLower(strings.TrimSpace(is.ReadingDirection)) == "rtl" {
+		p.gutterLeft = false
+	} else {
+		p.gutterLeft = true
+	}
+	// Apply per-page grid to build panels for the first page (until page switching UI exists)
+	if len(is.Pages) > 0 {
+		pg := is.Pages[0]
+		if len(pg.Panels) > 0 {
+			p.ShowPanels(pg)
+		} else if strings.TrimSpace(pg.Grid) != "" {
+			p.scene = buildGridNodes(pg.Grid, p.pageW, p.pageH, p.trimMargin)
+			p.selected = -1
+		} else {
+			p.scene = nil
+			p.selected = -1
+		}
+	}
+	p.Refresh()
+}
+
+// ShowPanels renders the given page's panels using their geometry and zOrder.
+func (p *PageCanvas) ShowPanels(pg domain.Page) {
+	// build nodes in z-order ascending so later items draw on top
+	s := make([]vector.Node, 0, len(pg.Panels))
+	// Sort copy by zOrder
+	tmp := append([]domain.Panel(nil), pg.Panels...)
+	sort.Slice(tmp, func(i, j int) bool { return tmp[i].ZOrder < tmp[j].ZOrder })
+	for _, pn := range tmp {
+		rect := vector.R(float32(pn.Geometry.X), float32(pn.Geometry.Y), float32(pn.Geometry.Width), float32(pn.Geometry.Height))
+		// Color based on beat coverage overlay
+		fill := vector.Color{R: 240, G: 240, B: 240, A: 255}
+		if p.beatOverlay {
+			beats := len(pn.BeatIDs)
+			if beats <= 0 {
+				fill = vector.Color{R: 240, G: 220, B: 220, A: 255} // light red hint for no beats
+			} else if beats == 1 {
+				fill = vector.Color{R: 210, G: 240, B: 210, A: 255}
+			} else if beats == 2 {
+				fill = vector.Color{R: 190, G: 235, B: 190, A: 255}
+			} else {
+				fill = vector.Color{R: 160, G: 230, B: 160, A: 255}
+			}
+		}
+		n := vector.NewRect(rect, vector.Fill{Enabled: true, Color: fill}, vector.Stroke{Enabled: true, Color: vector.Color{R: 40, G: 40, B: 40, A: 255}, Width: 1})
+		s = append(s, n)
+	}
+	p.scene = s
+	p.selected = -1
+	p.Refresh()
+}
 
 // Coordinate helpers: page <-> screen mapping
 func (p *PageCanvas) pageOriginAndScale() (cx, cy, scale float32) {
@@ -969,6 +1434,38 @@ func (r *pageCanvasRenderer) Layout(size fyne.Size) {
 	r.gutter.Resize(fyne.NewSize(float32ToFixed(gW), float32ToFixed(gH)))
 	r.gutter.Move(fyne.NewPos(float32ToFixed(gX), float32ToFixed(gY)))
 
+	// Ensure we have enough rectangle visuals for the current scene
+	need := len(r.pc.scene)
+	if need > len(r.rects) {
+		// Find insertion point before bbox in draw order
+		ins := -1
+		for i, obj := range r.objects {
+			if obj == r.bbox {
+				ins = i
+				break
+			}
+		}
+		if ins < 0 {
+			ins = len(r.objects)
+		}
+		add := need - len(r.rects)
+		newRects := make([]*canvas.Rectangle, 0, add)
+		for j := 0; j < add; j++ {
+			rr := canvas.NewRectangle(color.RGBA{R: 220, G: 220, B: 220, A: 255})
+			rr.StrokeColor = color.RGBA{R: 30, G: 30, B: 30, A: 255}
+			rr.StrokeWidth = 1
+			newRects = append(newRects, rr)
+		}
+		// Insert new rects into objects before bbox
+		objs := make([]fyne.CanvasObject, 0, len(r.objects)+len(newRects))
+		objs = append(objs, r.objects[:ins]...)
+		for _, rr := range newRects {
+			objs = append(objs, rr)
+		}
+		objs = append(objs, r.objects[ins:]...)
+		r.objects = objs
+		r.rects = append(r.rects, newRects...)
+	}
 	// Scene nodes as axis-aligned rectangles using their Bounds()
 	for i, n := range r.pc.scene {
 		if i >= len(r.rects) {
@@ -978,6 +1475,7 @@ func (r *pageCanvasRenderer) Layout(size fyne.Size) {
 		p0 := r.pc.toScreen(vector.Pt{X: b.X, Y: b.Y})
 		p1 := r.pc.toScreen(vector.Pt{X: b.X + b.W, Y: b.Y + b.H})
 		rc := r.rects[i]
+		rc.Show()
 		rc.Resize(fyne.NewSize(float32ToFixed(float32(p1.X-p0.X)), float32ToFixed(float32(p1.Y-p0.Y))))
 		rc.Move(fyne.NewPos(float32ToFixed(p0.X), float32ToFixed(p0.Y)))
 		// Color per node demo
@@ -987,6 +1485,10 @@ func (r *pageCanvasRenderer) Layout(size fyne.Size) {
 			rc.FillColor = color.RGBA{R: 160, G: 200, B: 240, A: 255}
 		}
 		rc.Refresh()
+	}
+	// Hide any surplus rectangles
+	for j := need; j < len(r.rects); j++ {
+		r.rects[j].Hide()
 	}
 
 	// Selection overlay

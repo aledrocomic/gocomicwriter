@@ -223,10 +223,10 @@ Alignment with Definition of Done:
 - [✓] Map beats to pages/panels; show unmapped beat warnings.
 
 ### Phase 3 — Page & Panel Planner
-- [ ] Issue setup dialog (trim, bleed, dpi, reading direction).
-- [ ] Grid templates and custom grids; apply per page.
-- [ ] Panel creation, ordering, and metadata editing.
-- [ ] Beat coverage overlay; page-turn pacing indicators.
+- [✓] Issue setup dialog (trim, bleed, dpi, reading direction).
+- [✓] Grid templates and custom grids; apply per page.
+- [✓] Panel creation, ordering, and metadata editing.
+- [✓] Beat coverage overlay; page-turn pacing indicators.
 
 ### Phase 4 — Lettering System
 - [ ] Balloon and caption tools with snapping and smart guides.

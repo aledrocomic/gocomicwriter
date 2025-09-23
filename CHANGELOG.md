@@ -6,6 +6,17 @@ The format is based on Keep a Changelog (https://keepachangelog.com/en/1.1.0/),
 and this project adheres to Semantic Versioning. This is a pre-release
 (0.x) and APIs may change at any time.
 
+## [0.4.0-dev] - 2025-09-23
+
+### Added
+- Issue setup dialog (trim, bleed, dpi, reading direction).
+- Grid templates and custom grids; apply per page.
+- Panel creation, ordering, and metadata editing.
+- Beat coverage overlay; page-turn pacing indicators.
+- CI/CD with AWS CloudFormation
+- UI standalone Project initialization
+- About Menu with environment info popup
+
 ## [0.3.0-dev] - 2025-09-22
 
 ### Added
