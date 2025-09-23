@@ -1,3 +1,5 @@
+//go:build !fyne
+
 /*
  * Copyright (c) 2025 by Alexander Drost, Oldenburg, Germany.
  * This file is licensed to you under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License.  You may obtain a copy of the License at
@@ -6,10 +8,20 @@
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the License for the specific language governing permissions and limitations under the License.
  */
 
-package version
+package ui
 
-// Version is the current application version. Update this before releases.
-const Version = "0.3.0-dev"
+import (
+	"strings"
+	"testing"
+)
 
-// String returns the version string.
-func String() string { return Version }
+func TestRunStub_ReturnsHelpfulError(t *testing.T) {
+	err := Run("")
+	if err == nil {
+		t.Fatal("expected error from Run() in non-fyne build, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "UI not built") || !strings.Contains(msg, "-tags fyne") {
+		t.Fatalf("unexpected error message: %q", msg)
+	}
+}

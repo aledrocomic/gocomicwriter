@@ -8,8 +8,10 @@
 
 package version
 
-// Version is the current application version. Update this before releases.
-const Version = "0.3.0-dev"
+import "testing"
 
-// String returns the version string.
-func String() string { return Version }
+func TestVersionStringNonEmpty(t *testing.T) {
+	if s := String(); s == "" {
+		t.Fatalf("version string is empty")
+	}
+}

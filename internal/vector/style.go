@@ -6,10 +6,52 @@
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the License for the specific language governing permissions and limitations under the License.
  */
 
-package version
+package vector
 
-// Version is the current application version. Update this before releases.
-const Version = "0.3.0-dev"
+// Styles and paint definitions.
 
-// String returns the version string.
-func String() string { return Version }
+type Color struct{ R, G, B, A uint8 }
+
+var (
+	Black       = Color{0, 0, 0, 255}
+	White       = Color{255, 255, 255, 255}
+	Transparent = Color{0, 0, 0, 0}
+)
+
+type FillRule uint8
+
+const (
+	NonZero FillRule = iota
+	EvenOdd
+)
+
+type Fill struct {
+	Color   Color
+	Rule    FillRule
+	Enabled bool
+}
+
+type LineCap uint8
+
+const (
+	CapButt LineCap = iota
+	CapRound
+	CapSquare
+)
+
+type LineJoin uint8
+
+const (
+	JoinMiter LineJoin = iota
+	JoinRound
+	JoinBevel
+)
+
+type Stroke struct {
+	Color    Color
+	Width    float32
+	Cap      LineCap
+	Join     LineJoin
+	MiterLim float32
+	Enabled  bool
+}

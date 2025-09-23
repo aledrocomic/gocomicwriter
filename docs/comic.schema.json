@@ -13,7 +13,8 @@
     "issues": {
       "type": "array",
       "items": {"$ref": "#/$defs/Issue"}
-    }
+    },
+    "bible": {"$ref": "#/$defs/Bible"}
   },
   "$defs": {
     "Metadata": {
@@ -181,6 +182,46 @@
         "outline": {"type": "boolean"},
         "shadow": {"type": "boolean"},
         "blur": {"type": "number", "minimum": 0}
+      }
+    },
+    "Bible": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "characters": {"type": "array", "items": {"$ref": "#/$defs/CharacterEntry"}},
+        "locations": {"type": "array", "items": {"$ref": "#/$defs/LocationEntry"}},
+        "tags": {"type": "array", "items": {"$ref": "#/$defs/TagEntry"}}
+      }
+    },
+    "CharacterEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "aliases": {"type": "array", "items": {"type": "string"}},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "notes": {"type": "string"}
+      }
+    },
+    "LocationEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "aliases": {"type": "array", "items": {"type": "string"}},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "notes": {"type": "string"}
+      }
+    },
+    "TagEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "notes": {"type": "string"}
       }
     }
   }
