@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"gocomicwriter/internal/domain"
 	"gocomicwriter/internal/script"
+	"sort"
+	"strings"
 )
 
 // BeatIDFor returns a stable identifier for a beat line.
@@ -92,4 +94,85 @@ func MapBeatToPanel(ph *ProjectHandle, pageNumber int, panelID string, beatID st
 		}
 	}
 	return fmt.Errorf("page %d not found", pageNumber)
+}
+
+// PageBeatCoverage summarizes beat counts per page and per panel.
+// It is used for simple overlay coloring and pacing summaries.
+// TotalBeats counts the number of beat links on that page (duplicates included if a beat is linked to multiple panels).
+// PanelBeatCounts keys are panel IDs; values are the number of beats linked to that panel.
+// Panels are recorded for pages present in the project, regardless of script content.
+// Pages with zero panels will return an empty map and TotalBeats=0.
+
+type PageBeatCoverage struct {
+	PageNumber      int
+	PanelBeatCounts map[string]int
+	TotalBeats      int
+}
+
+// ComputeBeatCoverage returns a sorted slice (by PageNumber ascending) of coverage entries for the given project.
+func ComputeBeatCoverage(p domain.Project) []PageBeatCoverage {
+	var out []PageBeatCoverage
+	for _, iss := range p.Issues {
+		for _, pg := range iss.Pages {
+			cov := PageBeatCoverage{PageNumber: pg.Number, PanelBeatCounts: map[string]int{}}
+			for _, pn := range pg.Panels {
+				cnt := len(pn.BeatIDs)
+				cov.PanelBeatCounts[pn.ID] = cnt
+				cov.TotalBeats += cnt
+			}
+			out = append(out, cov)
+		}
+		break // Phase 3 scope: first issue only
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].PageNumber < out[j].PageNumber })
+	return out
+}
+
+// PageTurnInfo describes whether a page is a page-turn and basic beat pacing hints.
+// IsTurn indicates if the end of this page is a turn moment according to reading direction.
+// HasBeats is true if the page contains at least one mapped beat.
+// LastPanelHasBeats is true if the visually topmost panel (highest zOrder) has beats.
+
+type PageTurnInfo struct {
+	PageNumber        int
+	IsTurn            bool
+	HasBeats          bool
+	LastPanelHasBeats bool
+}
+
+// ComputePageTurnIndicators evaluates an issue and provides page-turn flags per page.
+// Assumes western layout where page 1 is recto. For LTR, odd pages are turns; for RTL, even pages are turns.
+// Only the first issue is considered by higher-level UI, so this works per-issue as provided.
+func ComputePageTurnIndicators(iss domain.Issue) []PageTurnInfo {
+	out := make([]PageTurnInfo, 0, len(iss.Pages))
+	rtl := strings.ToLower(strings.TrimSpace(iss.ReadingDirection)) == "rtl"
+	for _, pg := range iss.Pages {
+		isTurn := false
+		if rtl {
+			isTurn = pg.Number%2 == 0
+		} else {
+			isTurn = pg.Number%2 == 1
+		}
+		pti := PageTurnInfo{PageNumber: pg.Number, IsTurn: isTurn}
+		// beats on page
+		for _, pn := range pg.Panels {
+			if len(pn.BeatIDs) > 0 {
+				pti.HasBeats = true
+				break
+			}
+		}
+		// last panel by zOrder
+		if len(pg.Panels) > 0 {
+			maxIdx := 0
+			for i := 1; i < len(pg.Panels); i++ {
+				if pg.Panels[i].ZOrder > pg.Panels[maxIdx].ZOrder {
+					maxIdx = i
+				}
+			}
+			pti.LastPanelHasBeats = len(pg.Panels[maxIdx].BeatIDs) > 0
+		}
+		out = append(out, pti)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].PageNumber < out[j].PageNumber })
+	return out
 }
