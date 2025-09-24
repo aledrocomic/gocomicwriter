@@ -506,20 +506,30 @@ func Run(projectDir string) error {
 	}
 	addCharEntry := widget.NewEntry()
 	addCharEntry.SetPlaceHolder("Add character name")
-	addCharBtn := widget.NewButton("Add", func() {
+	addChar := func(name string) {
 		if ph == nil {
 			dialog.ShowInformation("Characters", "Open a project first.", w)
 			return
 		}
-		name := strings.TrimSpace(addCharEntry.Text)
+		name = strings.TrimSpace(name)
 		if name == "" {
+			dialog.ShowInformation("Characters", "Please enter a character name.", w)
+			w.Canvas().Focus(addCharEntry)
 			return
 		}
 		l.Info("add character", slog.String("name", name))
 		ph.Project.Bible.Characters = append(ph.Project.Bible.Characters, domain.BibleCharacter{Name: name})
+		if err := storage.Save(ph); err != nil {
+			l.Error("save after add character", slog.Any("err", err))
+			dialog.ShowError(err, w)
+			return
+		}
 		addCharEntry.SetText("")
 		refreshBible()
-	})
+		status.SetText("Character added.")
+	}
+	addCharEntry.OnSubmitted = func(s string) { addChar(s) }
+	addCharBtn := widget.NewButton("Add", func() { addChar(addCharEntry.Text) })
 	delCharBtn := widget.NewButton("Delete", func() {
 		if ph == nil || selectedChar < 0 || selectedChar >= len(ph.Project.Bible.Characters) {
 			return
@@ -527,8 +537,14 @@ func Run(projectDir string) error {
 		name := ph.Project.Bible.Characters[selectedChar].Name
 		l.Info("delete character", slog.Int("index", selectedChar), slog.String("name", name))
 		ph.Project.Bible.Characters = append(ph.Project.Bible.Characters[:selectedChar], ph.Project.Bible.Characters[selectedChar+1:]...)
+		if err := storage.Save(ph); err != nil {
+			l.Error("save after delete character", slog.Any("err", err))
+			dialog.ShowError(err, w)
+			return
+		}
 		selectedChar = -1
 		refreshBible()
+		status.SetText("Character deleted.")
 	})
 	charBox := container.NewVBox(widget.NewLabel("Characters"), charList, container.NewHBox(addCharEntry, addCharBtn, delCharBtn))
 
@@ -548,20 +564,30 @@ func Run(projectDir string) error {
 	}
 	addLocEntry := widget.NewEntry()
 	addLocEntry.SetPlaceHolder("Add location name")
-	addLocBtn := widget.NewButton("Add", func() {
+	addLocation := func(name string) {
 		if ph == nil {
 			dialog.ShowInformation("Locations", "Open a project first.", w)
 			return
 		}
-		name := strings.TrimSpace(addLocEntry.Text)
+		name = strings.TrimSpace(name)
 		if name == "" {
+			dialog.ShowInformation("Locations", "Please enter a location name.", w)
+			w.Canvas().Focus(addLocEntry)
 			return
 		}
 		l.Info("add location", slog.String("name", name))
 		ph.Project.Bible.Locations = append(ph.Project.Bible.Locations, domain.BibleLocation{Name: name})
+		if err := storage.Save(ph); err != nil {
+			l.Error("save after add location", slog.Any("err", err))
+			dialog.ShowError(err, w)
+			return
+		}
 		addLocEntry.SetText("")
 		refreshBible()
-	})
+		status.SetText("Location added.")
+	}
+	addLocEntry.OnSubmitted = func(s string) { addLocation(s) }
+	addLocBtn := widget.NewButton("Add", func() { addLocation(addLocEntry.Text) })
 	delLocBtn := widget.NewButton("Delete", func() {
 		if ph == nil || selectedLoc < 0 || selectedLoc >= len(ph.Project.Bible.Locations) {
 			return
@@ -569,8 +595,14 @@ func Run(projectDir string) error {
 		name := ph.Project.Bible.Locations[selectedLoc].Name
 		l.Info("delete location", slog.Int("index", selectedLoc), slog.String("name", name))
 		ph.Project.Bible.Locations = append(ph.Project.Bible.Locations[:selectedLoc], ph.Project.Bible.Locations[selectedLoc+1:]...)
+		if err := storage.Save(ph); err != nil {
+			l.Error("save after delete location", slog.Any("err", err))
+			dialog.ShowError(err, w)
+			return
+		}
 		selectedLoc = -1
 		refreshBible()
+		status.SetText("Location deleted.")
 	})
 	locBox := container.NewVBox(widget.NewLabel("Locations"), locList, container.NewHBox(addLocEntry, addLocBtn, delLocBtn))
 
@@ -590,20 +622,30 @@ func Run(projectDir string) error {
 	}
 	addTagEntry := widget.NewEntry()
 	addTagEntry.SetPlaceHolder("Add tag")
-	addTagBtn := widget.NewButton("Add", func() {
+	addTag := func(name string) {
 		if ph == nil {
 			dialog.ShowInformation("Tags", "Open a project first.", w)
 			return
 		}
-		name := strings.TrimSpace(addTagEntry.Text)
+		name = strings.TrimSpace(name)
 		if name == "" {
+			dialog.ShowInformation("Tags", "Please enter a tag.", w)
+			w.Canvas().Focus(addTagEntry)
 			return
 		}
 		l.Info("add tag", slog.String("name", name))
 		ph.Project.Bible.Tags = append(ph.Project.Bible.Tags, domain.BibleTag{Name: name})
+		if err := storage.Save(ph); err != nil {
+			l.Error("save after add tag", slog.Any("err", err))
+			dialog.ShowError(err, w)
+			return
+		}
 		addTagEntry.SetText("")
 		refreshBible()
-	})
+		status.SetText("Tag added.")
+	}
+	addTagEntry.OnSubmitted = func(s string) { addTag(s) }
+	addTagBtn := widget.NewButton("Add", func() { addTag(addTagEntry.Text) })
 	delTagBtn := widget.NewButton("Delete", func() {
 		if ph == nil || selectedTag < 0 || selectedTag >= len(ph.Project.Bible.Tags) {
 			return
@@ -611,8 +653,14 @@ func Run(projectDir string) error {
 		name := ph.Project.Bible.Tags[selectedTag].Name
 		l.Info("delete tag", slog.Int("index", selectedTag), slog.String("name", name))
 		ph.Project.Bible.Tags = append(ph.Project.Bible.Tags[:selectedTag], ph.Project.Bible.Tags[selectedTag+1:]...)
+		if err := storage.Save(ph); err != nil {
+			l.Error("save after delete tag", slog.Any("err", err))
+			dialog.ShowError(err, w)
+			return
+		}
 		selectedTag = -1
 		refreshBible()
+		status.SetText("Tag deleted.")
 	})
 	tagBox := container.NewVBox(widget.NewLabel("Tags"), tagList, container.NewHBox(addTagEntry, addTagBtn, delTagBtn))
 
