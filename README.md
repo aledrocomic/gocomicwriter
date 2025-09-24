@@ -10,11 +10,16 @@ This repository currently provides a development skeleton: a desktop UI, an evol
 
 ## Contents
 - What is this? (short overview)
+- Tech stack and entry points
 - Current features and what’s next
+- Requirements
 - Install and quick start
 - Usage
+- Common commands (scripts)
+- Logging and environment variables
 - Project manifest (comic.json) and schema
 - Repository layout
+- Tests
 - Roadmap and concept
 - CI/CD and releases
 - Contributing and conduct
@@ -29,6 +34,21 @@ Go Comic Writer is an in‑progress toolchain for comic writing and lettering. I
 - Cross‑platform and offline‑first
 
 The long‑term plan is a desktop application with a canvas editor and exporters (PDF/PNG/SVG/CBZ). See the concept document for details.
+
+## Tech stack and entry points
+- Language: Go 1.24 (module-based; see go.mod)
+- UI framework: Fyne v2 (build tag: `fyne`)
+- Logging: standard library slog with optional rotating file output (lumberjack)
+- JSON Schema validation: xeipuuv/gojsonschema
+- Package manager: Go modules
+- OS: Windows, macOS, Linux (UI requires OpenGL and cgo)
+
+Entry points:
+- cmd/gocomicwriter/main.go — main program. Build with `-tags fyne` to include the desktop UI; without it, a stub is compiled that prints a helpful message.
+- internal/ui — UI implementation. Build-tagged variants:
+  - app_fyne.go — real UI when `fyne` and cgo are enabled.
+  - app_fyne_nocgo.go — helpful message when `fyne` is set but cgo is disabled.
+  - app_stub.go — stub when built without the `fyne` tag.
 
 ## Current features (alpha)
 - Desktop UI launcher; optional project path argument to open on startup.
@@ -65,11 +85,11 @@ Prerequisites:
 Build the desktop app (UI) from source:
 
 ```bash
-# From within a clone of this repository
-go build -o bin/gocomicwriter ./cmd/gocomicwriter
+# From within a clone of this repository (UI build; requires cgo and a C toolchain)
+go build -tags fyne -o bin/gocomicwriter ./cmd/gocomicwriter
 
 # Or install into your GOPATH/bin (adjust module path if needed)
-go install ./cmd/gocomicwriter
+go install -tags fyne ./cmd/gocomicwriter
 ```
 
 Verify it launches (UI):
@@ -188,6 +208,15 @@ Troubleshooting:
 Notes:
 - Project operations (New/Open/Save) are available from the UI's File menu. Saves are transactional and copy the previous manifest into backups/comic.json.YYYYMMDD-HHMMSS.bak. Opening a project falls back to the latest valid backup if the manifest is unreadable.
 
+## Common commands (scripts)
+These shell snippets act as “scripts” you can copy-paste. Adjust paths for your OS.
+- Build UI binary (Windows): `go build -tags fyne -o bin\\gocomicwriter.exe ./cmd/gocomicwriter`
+- Build UI binary (macOS/Linux): `go build -tags fyne -o bin/gocomicwriter ./cmd/gocomicwriter`
+- Run UI from source (Windows): `go run -tags fyne ./cmd/gocomicwriter .\\tmp_proj`
+- Run UI from source (macOS/Linux): `go run -tags fyne ./cmd/gocomicwriter ./tmp_proj`
+- Format code: `gofmt -s -w .`
+- Vet: `go vet ./...`
+
 ## Logging configuration
 The app uses structured logging (slog). Configure via environment variables:
 - GCW_LOG_LEVEL=debug|info|warn|error (default: info)
@@ -266,8 +295,10 @@ Top‑level and key packages:
 - Root files:
   - README.md, CHANGELOG.md, LICENSE, CODE_OF_CONDUCT.md, go.mod, go.sum.
 
-Tests:
-- Tests are co-located next to their packages in *_test.go files. Run: `go test ./...`
+## Tests
+- Run all tests: `go test ./...`
+- With coverage: `go test ./... -coverprofile=cover.out` then `go tool cover -html=cover.out`
+- Race detector (recommended): `go test -race ./...`
 
 ## Roadmap and concept
 The full product concept, architecture overview, and milestone plan are maintained here:
@@ -311,9 +342,10 @@ Notes:
 - You must have a CodeStar Connection to GitHub in eu-west-1 and pass its ARN as GitHubConnectionArn.
 - To publish artifacts to S3, create a bucket and pass its name as ReleaseBucketName; otherwise S3 upload is skipped.
 - If your build entry point differs from the template defaults, see “Adjusting build paths/names” in docs/ci-cd-aws.md.
+- Toolchain version: the template’s CodeBuild buildspec uses Go 1.23; this repository targets Go 1.24 (see go.mod). Update the template if you want them aligned.
 
-Optional GitHub Actions:
-- This repo also contains .github/workflows/ci.yml and release.yml for GitHub-native CI and tag-based releases. See docs/ci-cd-aws.md for details on the release workflow and optional S3 publishing via OIDC.
+GitHub Actions (TODO):
+- No GitHub Actions workflows are currently included in this repository. For an example release workflow and setup instructions, see docs/ci-cd-aws.md (section "GitHub Actions-based releases"). If you add workflows later, update this README accordingly.
 
 ## Contributing and conduct
 Contributions are welcome once core foundations stabilize. Until then, feel free to:
