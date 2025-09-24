@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -705,7 +706,12 @@ func Run(projectDir string) error {
 			version.String(), runtime.GOOS, runtime.GOARCH, runtime.Version(), exe, cwd)
 		dialog.ShowInformation("Installation Environment", info, w)
 	})
-	aboutMenu := fyne.NewMenu("About", aboutItem)
+	copyrightItem := fyne.NewMenuItem("Copyright…", func() {
+		currentYear := time.Now().Year()
+		msg := fmt.Sprintf("Go Comic Writer\nCopyright © 2023-%d The Go Comic Writer Authors\n\nLicensed under the Apache License, Version 2.0.\nSee the LICENSE file for details.", currentYear)
+		dialog.ShowInformation("Copyright", msg, w)
+	})
+	aboutMenu := fyne.NewMenu("About", aboutItem, copyrightItem)
 
 	w.SetMainMenu(fyne.NewMainMenu(fileMenu, issueMenu, aboutMenu))
 
