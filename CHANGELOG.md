@@ -6,6 +6,24 @@ The format is based on Keep a Changelog (https://keepachangelog.com/en/1.1.0/),
 and this project adheres to Semantic Versioning. This is a pre-release
 (0.x) and APIs may change at any time.
 
+## [0.5.0-dev] - 2025-09-25
+
+### Added
+- Fixed AWS CodePipline with a role policy for S3
+- Deleted release.yml as Github action
+-Added copyright pop-up window in about menu
+- Disabled CLI for UI-Only User interaction
+- Enhanced User interaction and event info logging
+- Added additional tests to achieve a minimum of 80% code test coverage
+- Fixed character addition issue in open project
+- Balloon and caption tools with snapping and smart guides.
+- Tail drawing with speaker anchor and auto-orient.
+- Typography engine: font loading, style presets, kerning/leading/tracking.
+- SFX tool with outline/fill/effects and text-on-path.
+- Auto layout suggestion for balloons with collision avoidance.
+- Style sheets (global, per-issue, per-page)
+-Added databases for search and thin Postgesql Backend to concept
+
 ## [0.4.0-dev] - 2025-09-23
 
 ### Added
