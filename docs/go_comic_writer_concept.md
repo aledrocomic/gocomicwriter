@@ -11,6 +11,8 @@ Empower writers and comic teams to go from script to lettered pages in one strea
 - Precise lettering: pro typography, balloons, tails, and SFX with predictable export.
 - Asset organization: characters, locations, props, and visual references, all searchable and reusable.
 - Reliable exports: CBZ, PDF, PNG/SVG with consistent rendering, bleeds, and trim boxes.
+- Fast search and cross-references: instant full-text search across script, captions, SFX, and Bible, with where-used lookups via cross-references.
+- Connected by design: offline-first with a local embedded index; thin backend for organization-wide search and future sync.
 - Offline-first and cross-platform: Windows, macOS, Linux.
 
 ## Primary Personas
@@ -25,6 +27,8 @@ Empower writers and comic teams to go from script to lettered pages in one strea
 - Letter pages: add balloons, tails, captions, SFX; adjust typography and styles.
 - Export to CBZ/PDF/PNG/SVG with per-page and whole-issue options.
 - Reuse style packs and templates across projects.
+- Search across the project: global full-text with filters (character, scene, page range, tags) and fast "where-used" for characters/assets/scenes.
+- Connect to the thin backend: organization-wide search and project listing; lays groundwork for future sync.
 
 ---
 
@@ -60,7 +64,13 @@ Empower writers and comic teams to go from script to lettered pages in one strea
 - Optional metadata embedding (title, issue, creators).
 - Export profiles (web, print, social).
 
-6. Collaboration (Phase 2+)
+6. Search & Indexing
+- Full-text search across script, captions, SFX, and the story Bible with filters (character, scene, page range, tags).
+- Fast cross-references and "where-used" queries (characters, assets, scenes) via maintained backlink tables.
+- Embedded per-project index (SQLite FTS5) with thumbnail and geometry caches under .gcw; rebuildable and disposable.
+- Parity with backend search semantics where applicable.
+
+7. Collaboration (Phase 2+)
 - Commenting and review mode.
 - Project files designed for merge friendliness via clear JSON manifests and separate assets.
 
@@ -68,10 +78,12 @@ Empower writers and comic teams to go from script to lettered pages in one strea
 
 ## Non-Functional Requirements
 - Cross-platform: Windows, macOS, Linux.
-- Offline-first local projects; optional sync later.
-- Deterministic rendering for identical exports across platforms.
-- Stable performance on mid-range machines; render large issues without UI freeze.
+- Offline-first: local projects with an embedded per-project index (SQLite FTS5) and a thin backend for organization-wide search and future sync.
+- Deterministic rendering and search: identical exports and identical search results across platforms/installs (controlled SQLite build and pinned tokenizer config).
+- Robustness: index is rebuildable and disposable; tolerate corruption with automatic rebuild paths; crash-safe autosave and backups.
+- Stable performance on mid-range machines; render and search large issues without UI freeze.
 - Accessible UI and keyboard-centric workflows.
+- Backend SLOs: responsive search APIs, secure TLS, and predictable pagination for large result sets.
 
 ---
 
@@ -81,6 +93,8 @@ Empower writers and comic teams to go from script to lettered pages in one strea
 - Rendering: Vector-first drawing pipeline with resolution-independent primitives; rasterization for PNG exports.
 - UI: Desktop application shell with a modern, responsive interface and a canvas editor for pages.
 - Storage: Local project directory with a human-readable manifest and organized assets.
+- Indexing: Embedded SQLite FTS5 per project at .gcw/index.sqlite with thumbnails/geometry caches; rebuildable and disposable.
+- Backend: Thin Go service with PostgreSQL for organization-wide search and future sync; offline-first integration; JSON manifest remains the source of truth.
 - Exporters: PDF, PNG/SVG, CBZ pipeline honoring trim/bleed, color profiles, and fonts.
 - Extension points: Style packs, templates, and future scripting hooks.
 
@@ -164,6 +178,7 @@ Goals:
 5) Integration flows
 - CLI smoke tests (cmd/gocomic): create project → add minimal data → save/export; assert files exist and validate against schema.
 - Migration tests: open older manifest versions and verify automatic upgrade produces expected new-version JSON.
+- Backend E2E/parity: spin up backend locally (Docker); verify auth and search endpoints; compare representative queries against the embedded SQLite index.
 - Crash/Recovery: simulate a panic during save and assert journal/backup allows lossless recovery.
 
 6) Performance and stability
@@ -186,6 +201,7 @@ Goals:
 ### CI and Quality Gates
 - Run unit + schema + fast golden tests on every commit; heavy exporter goldens can be nightly.
 - Static analysis: go vet and staticcheck; lint commit messages for migration/version bumps.
+- Backend parity tests: SQLite↔Postgres search semantics validated in CI (quick subset) and nightly (full suite).
 - Coverage targets: Phase 0–2 ≥60% core packages; Phase 3–5 ≥80% for domain/storage/exporters (UI excluded).
 
 ### Manual and Exploratory Testing (UI)
@@ -242,6 +258,16 @@ Alignment with Definition of Done:
 - [ ] CBZ packaging with metadata manifest.
 - [ ] Export presets (web, print) and batch export.
 
+### Phase 5a — Data & Indexing (Embedded SQLite; see "Database and Indexing — Selected Approach")
+- [ ] Establish per-project index store at `project/.gcw/index.sqlite`; enable WAL; add `meta/version` tables.
+- [ ] Define schema: `documents` (doc_id, type, path, page_id, character_id, text), `fts_documents` (FTS5, contentless with external content), `cross_refs` (from_id → to_id), `assets` (hash, path, type), `previews` (page_id/panel_id, thumb_blob, updated_at), `snapshots` (page_id, ts, delta_blob).
+- [ ] Implement background indexer: initial full build from `comic.json` and incremental updates on save; safe rebuild command ("Rebuild Index").
+- [ ] Add search service in-app: full-text with filters (character, scene, page range, tags) and "where-used" via `cross_refs`.
+- [ ] Wire UI: search panel/omnibox; navigate results to issue/page/panel; highlight hits.
+- [ ] Add caching pipeline: generate/stash thumbnails and geometry caches in `previews`; LRU eviction and max-size cap.
+- [ ] Migrations and tests: schema migration scripts, corruption/rebuild path, performance baselines; fixtures to validate FTS5 and cross-ref queries.
+- [ ] Docs and ops: clarify DB is derived/rebuildable; backup guidance; vacuum schedule.
+
 ### Phase 6 — Project UX & Assets
 - [ ] Project dashboard with recent files and templates.
 - [ ] Asset library with previews and drag-and-drop into pages.
@@ -252,6 +278,14 @@ Alignment with Definition of Done:
 - [ ] Commenting and review mode on script and pages.
 - [ ] Change tracking in script editor.
 - [ ] Merge-friendly project format guidance and diff tips.
+
+### Phase 7a — Thin Backend (PostgreSQL; see "Database and Indexing — Selected Approach")
+- [ ] Define minimal backend service (Go) using PostgreSQL: schema for projects, `documents`, full-text via `tsvector`+GIN, `cross_refs`, assets metadata; migrations.
+- [ ] API endpoints: auth (token), list projects, pull index snapshot; later: push deltas and comments.
+- [ ] Desktop integration (behind feature flag): manual "Connect to Server"; read-only listing and search first; file-based `comic.json` remains the source of truth.
+- [ ] Sync prototype: op-log format and stable IDs; `created_at/updated_at/version` columns; basic push/pull over HTTPS (no conflict resolution yet).
+- [ ] Security/ops: TLS, per-user auth, Docker dev stack (Postgres + MinIO optional), config via env; health checks.
+- [ ] Tests: parity checks for search between SQLite and Postgres; end-to-end integration tests.
 
 ### Phase 8 — Packaging & Distribution
 - [ ] Cross-platform builds and installers.
@@ -268,7 +302,8 @@ Alignment with Definition of Done:
 ## Definition of Done (Per Feature)
 - Documented user flows and shortcuts.
 - Deterministic rendering and export parity across platforms.
-- Automated tests for model, storage, and exporters; manual test plans for UI.
+- Search/indexing parity: embedded SQLite search matches backend search semantics where applicable; successful full index rebuild from comic.json.
+- Automated tests for model, storage, exporters, and search; manual test plans for UI.
 - Performance baseline met or improved versus previous milestone.
 
 ---
@@ -286,3 +321,77 @@ Alignment with Definition of Done:
 - Cross-platform text rendering parity: rely on a single shaping/layout engine and comprehensive test scenes.
 - Large project performance: incremental rendering, background export, and careful memory management.
 - Merge conflicts in binary assets: keep manifests text-based and assets external; provide diff tooling for JSON.
+
+
+---
+
+## Database and Indexing — Selected Approach
+
+Selected approach
+- Source of truth: the project folder with a human-readable `comic.json` manifest and external assets. This remains canonical across all phases.
+- Required local index (Phase 5a): an embedded per-project SQLite database under `project/.gcw/index.sqlite` providing full‑text search (FTS5), cross‑references, thumbnails, geometry caches, and autosave snapshots.
+- Required thin backend (Phase 7a): a minimal Go service backed by PostgreSQL to provide organization‑wide search and lay the foundation for future sync. The desktop app stays offline‑first and continues to operate directly on the folder project model.
+
+Why a DB and what it’s used for
+1) Fast search and navigation
+- Full‑text search across dialog, SFX, character names, notes, and the story Bible.
+- Faceted queries (character, scene, page range, tags) that would be slow to compute from raw JSON on every request.
+- Chosen tech:
+  - Embedded: SQLite with FTS5 (contentless or external content tables) for full‑text.
+  - Server: PostgreSQL with `tsvector` + GIN for full‑text; keep tokenization/config aligned with SQLite for parity.
+
+2) Asset and preview caching
+- Thumbnails, rasterized previews, and derived vector outlines to avoid recomputation on canvas zoom/pan.
+- Asset hashes (content‑addressed) to deduplicate across pages/projects.
+- Chosen tech:
+  - SQLite BLOBs for thumbs/caches; consider a KV store only if needed later.
+
+3) Autosave, snapshots, and history
+- Periodic autosave snapshots/crash recovery separate from the main `comic.json`.
+- Lightweight rolling checkpoints for panels/pages (not a full VCS).
+- Schema: `snapshots(project_id, page_id, ts, delta_blob)` with retention policy.
+
+4) Cross‑file references and integrity
+- Unique IDs and backlinks (character ⇄ appearances, assets ⇄ usage) enabling fast "where used" and integrity checks.
+
+5) Collaboration/sync readiness
+- While real‑time is a later milestone, the backend schema supports comments, cross‑project search, and future op‑log/CRDT state.
+
+What remains in files vs DB
+- Files (source of truth):
+  - `comic.json` per `docs/comic.schema.json` (Issue, Page, Panel, GridSpec, Bible, etc.).
+  - Linked binary assets (fonts, images, placed SVGs) in project folders.
+- Database (derived/ephemeral):
+  - Full‑text index of project text fields.
+  - Thumbnails, render caches, geometry caches, font lookup caches.
+  - Autosave snapshots and recovery metadata.
+  - Cross‑reference tables.
+
+Embedded architecture (Phase 5a)
+- Folder layout is unchanged:
+  - `project/manifest/comic.json` (authoritative), `project/assets/…`, `project/.gcw/` for index/caches.
+- Embedded DB at `project/.gcw/index.sqlite` (WAL enabled).
+- Background indexer builds initially from `comic.json` and incrementally on saves; single "Rebuild Index" command for recovery.
+- Optional global app DB: `~/.gocomicwriter/app.sqlite` for recents, font discovery cache, and settings.
+
+Thin backend (Phase 7a)
+- Go service + PostgreSQL schema for projects, `documents` (for search), `cross_refs`, assets metadata; FTS via `tsvector` + GIN.
+- Endpoints: auth (token), list projects, pull index snapshot; subsequent milestones add push deltas/comments.
+- Desktop integration (feature‑flagged UI path is acceptable) with manual "Connect to Server"; read‑only listing/search first; folder project remains the source of truth.
+- Sync prototype: stable IDs and op‑log format with `created_at/updated_at/version` columns; basic push/pull over HTTPS.
+
+Operational considerations
+- Reliability: SQLite WAL, periodic VACUUM; DB is disposable and rebuildable from `comic.json`.
+- Backups: users back up the project folder; the embedded DB can be excluded—rebuild on demand.
+- Portability: projects open read‑only without the DB; app creates/rebuilds index as needed.
+- Security: TLS for backend; no secrets stored in local DB; sanitize cached text used for FTS.
+
+Testing and parity
+- Parity tests: ensure SQLite and PostgreSQL return equivalent search results for shared tokenization/config.
+- Corruption/rebuild: fixtures and tests for damaged indexes and successful rebuilds.
+- Performance baselines: indexing, query latency, cache sizes.
+
+Commitments
+- JSON manifest remains canonical for editing and interchange.
+- Embedded SQLite index is a required feature from Phase 5a onward.
+- Thin backend (PostgreSQL) is a required milestone in Phase 7a, initially providing org‑wide search with read‑only integration and forming the basis for future sync.
