@@ -229,12 +229,12 @@ Alignment with Definition of Done:
 - [✓] Beat coverage overlay; page-turn pacing indicators.
 
 ### Phase 4 — Lettering System
-- [ ] Balloon and caption tools with snapping and smart guides.
-- [ ] Tail drawing with speaker anchor and auto-orient.
-- [ ] Typography engine: font loading, style presets, kerning/leading/tracking.
-- [ ] SFX tool with outline/fill/effects and text-on-path.
-- [ ] Auto layout suggestion for balloons with collision avoidance.
-- [ ] Style sheets (global, per-issue, per-page).
+- [✓] Balloon and caption tools with snapping and smart guides.
+- [✓] Tail drawing with speaker anchor and auto-orient.
+- [✓] Typography engine: font loading, style presets, kerning/leading/tracking.
+- [✓] SFX tool with outline/fill/effects and text-on-path.
+- [✓] Auto layout suggestion for balloons with collision avoidance.
+- [✓] Style sheets (global, per-issue, per-page).
 
 ### Phase 5 — Exporters
 - [ ] PDF export (with trim/bleed, vector text when possible).
