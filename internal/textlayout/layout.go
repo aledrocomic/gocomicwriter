@@ -15,6 +15,7 @@ package textlayout
 import (
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/basicfont"
+	"unicode/utf8"
 )
 
 // FontSpec describes a requested font.
@@ -31,9 +32,13 @@ type Metrics struct {
 }
 
 // Span is a run of text with the same font/style.
+// Tracking adds extra pixels between glyphs (applied per inter-glyph gap).
+// Leading adds extra pixels to the line height when this span is present on the line.
 type Span struct {
-	Text string
-	Font FontSpec
+	Text     string
+	Font     FontSpec
+	Tracking float32 // px per inter-glyph gap
+	Leading  float32 // extra px added to line height
 }
 
 // Line is a single laid out line with width and ascent/descent.
@@ -65,7 +70,7 @@ type Layouter interface {
 // BasicProvider uses x/image/basicfont Face7x13 for deterministic tests.
 type BasicProvider struct{}
 
-func (BasicProvider) Resolve(spec FontSpec) (font.Face, Metrics) {
+func (BasicProvider) Resolve(_ FontSpec) (font.Face, Metrics) {
 	f := basicfont.Face7x13
 	m := f.Metrics()
 	return f, Metrics{
@@ -87,21 +92,25 @@ func (l *WordWrapLayouter) Layout(spans []Span, maxWidth float32) (TextBox, erro
 	}
 	// For simplicity, assume a single font per box for metrics aggregation.
 	face, met := l.Provider.Resolve(FontSpec{})
-	drawer := &font.Drawer{Face: face}
 	cur := Line{Ascent: met.Ascent, Descent: met.Descent}
 	box := TextBox{Metrics: met}
+	var curLeading float32
 	addLine := func() {
 		box.Lines = append(box.Lines, cur)
 		if cur.Width > box.Width {
 			box.Width = cur.Width
 		}
-		box.Height += met.Ascent + met.Descent + met.LineGap
+		box.Height += met.Ascent + met.Descent + met.LineGap + curLeading
 		cur = Line{Ascent: met.Ascent, Descent: met.Descent}
+		curLeading = 0
 	}
 	for _, sp := range spans {
 		if sp.Text == "" {
 			continue
 		}
+		// Resolve face for this span to measure words with kerning
+		face, _ = l.Provider.Resolve(sp.Font)
+		d := &font.Drawer{Face: face}
 		// naive split by spaces, keep spaces minimal
 		start := 0
 		for i := 0; i <= len(sp.Text); i++ {
@@ -111,18 +120,21 @@ func (l *WordWrapLayouter) Layout(spans []Span, maxWidth float32) (TextBox, erro
 				if i < len(sp.Text) {
 					space = sp.Text[i]
 				}
-				w := advance(drawer, word)
+				w := measureWithTracking(d, word, sp.Tracking)
 				// if word alone exceeds maxWidth, force on new line
 				if cur.Width > 0 && cur.Width+w > maxWidth && maxWidth > 0 {
 					addLine()
 				}
 				if word != "" {
-					cur.Spans = append(cur.Spans, Span{Text: word, Font: sp.Font})
+					cur.Spans = append(cur.Spans, Span{Text: word, Font: sp.Font, Tracking: sp.Tracking, Leading: sp.Leading})
 					cur.Width += w
+					if sp.Leading > curLeading {
+						curLeading = sp.Leading
+					}
 				}
 				if space == ' ' {
-					ws := advance(drawer, " ")
-					cur.Spans = append(cur.Spans, Span{Text: " ", Font: sp.Font})
+					ws := advance(d, " ")
+					cur.Spans = append(cur.Spans, Span{Text: " ", Font: sp.Font, Tracking: sp.Tracking, Leading: sp.Leading})
 					cur.Width += ws
 				} else if space == '\n' {
 					addLine()
@@ -142,6 +154,18 @@ func advance(d *font.Drawer, s string) float32 {
 	return float32(d.MeasureString(s) >> 6) // fixed.Int26_6 to px
 }
 
+// measureWithTracking adds tracking (letter-spacing) to the measured width.
+func measureWithTracking(d *font.Drawer, s string, tracking float32) float32 {
+	w := advance(d, s)
+	if tracking != 0 {
+		n := utf8.RuneCountInString(s)
+		if n > 1 {
+			w += tracking * float32(n-1)
+		}
+	}
+	return w
+}
+
 // Measure provides a quick way to measure text width/height without line-breaks.
 func Measure(provider Provider, spans []Span) (w, h float32) {
 	if provider == nil {
@@ -150,11 +174,15 @@ func Measure(provider Provider, spans []Span) (w, h float32) {
 	_, met := provider.Resolve(FontSpec{})
 	var width float32
 	var face font.Face
+	var maxLeading float32
 	for _, sp := range spans {
 		face, _ = provider.Resolve(sp.Font)
 		d := &font.Drawer{Face: face}
-		width += advance(d, sp.Text)
+		width += measureWithTracking(d, sp.Text, sp.Tracking)
+		if sp.Leading > maxLeading {
+			maxLeading = sp.Leading
+		}
 	}
-	lineH := met.Ascent + met.Descent
+	lineH := met.Ascent + met.Descent + maxLeading
 	return width, lineH
 }

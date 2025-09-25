@@ -2,7 +2,7 @@
 
 A Go-powered project aiming to become a writing, planning, and lettering toolchain for comics — from script to precisely lettered pages — with reliable exports for print and screen.
 
-This repository currently provides a development skeleton: a minimal CLI, an evolving domain model, and a public JSON schema for the project manifest. The product concept and roadmap live in docs/go_comic_writer_concept.md.
+This repository currently provides a development skeleton: a desktop UI, an evolving domain model, and a public JSON schema for the project manifest. The product concept and roadmap live in docs/go_comic_writer_concept.md.
 
 - Vision: Empower comic creators to go from script to lettered pages in one streamlined, offline‑first tool.
 - Status: Early stage (0.4.0‑dev). Not production‑ready.
@@ -10,11 +10,16 @@ This repository currently provides a development skeleton: a minimal CLI, an evo
 
 ## Contents
 - What is this? (short overview)
+- Tech stack and entry points
 - Current features and what’s next
+- Requirements
 - Install and quick start
 - Usage
+- Common commands (scripts)
+- Logging and environment variables
 - Project manifest (comic.json) and schema
 - Repository layout
+- Tests
 - Roadmap and concept
 - CI/CD and releases
 - Contributing and conduct
@@ -30,8 +35,23 @@ Go Comic Writer is an in‑progress toolchain for comic writing and lettering. I
 
 The long‑term plan is a desktop application with a canvas editor and exporters (PDF/PNG/SVG/CBZ). See the concept document for details.
 
+## Tech stack and entry points
+- Language: Go 1.24 (module-based; see go.mod)
+- UI framework: Fyne v2 (build tag: `fyne`)
+- Logging: standard library slog with optional rotating file output (lumberjack)
+- JSON Schema validation: xeipuuv/gojsonschema
+- Package manager: Go modules
+- OS: Windows, macOS, Linux (UI requires OpenGL and cgo)
+
+Entry points:
+- cmd/gocomicwriter/main.go — main program. Build with `-tags fyne` to include the desktop UI; without it, a stub is compiled that prints a helpful message.
+- internal/ui — UI implementation. Build-tagged variants:
+  - app_fyne.go — real UI when `fyne` and cgo are enabled.
+  - app_fyne_nocgo.go — helpful message when `fyne` is set but cgo is disabled.
+  - app_stub.go — stub when built without the `fyne` tag.
+
 ## Current features (alpha)
-- CLI commands: version, init, open, save, ui.
+- Desktop UI launcher; optional project path argument to open on startup.
 - Transactional project storage with a human‑readable manifest (comic.json) and timestamped backups under backups/.
 - Crash safety: on panic, write a crash report and autosave snapshot; on open, fall back to the latest valid backup if the manifest is unreadable.
 - Structured logging via Go's slog with simple env configuration; optional rotating file via GCW_LOG_FILE.
@@ -62,49 +82,34 @@ Prerequisites:
 - Go 1.24 or newer
 - A supported OS (Windows/macOS/Linux)
 
-Install the CLI from source:
+Build the desktop app (UI) from source:
 
 ```bash
-# From within a clone of this repository
-go build -o bin/gocomicwriter ./cmd/gocomicwriter
+# From within a clone of this repository (UI build; requires cgo and a C toolchain)
+go build -tags fyne -o bin/gocomicwriter ./cmd/gocomicwriter
 
 # Or install into your GOPATH/bin (adjust module path if needed)
-go install ./cmd/gocomicwriter
+go install -tags fyne ./cmd/gocomicwriter
 ```
 
-Verify it runs:
+Verify it launches (UI):
 
 ```bash
-bin/gocomicwriter
-bin/gocomicwriter -v
-bin/gocomicwriter --version
-```
+# Windows PowerShell
+go run -tags fyne ./cmd/gocomicwriter
 
-Expected output resembles:
+# macOS/Linux
+GOFLAGS='' go run -tags fyne ./cmd/gocomicwriter
 
-```
-Go Comic Writer — development skeleton
-Version: 0.4.0-dev
+# Optionally, open the sample project on startup
+# Windows PowerShell
+go run -tags fyne ./cmd/gocomicwriter .\tmp_proj
+# macOS/Linux
+GOFLAGS='' go run -tags fyne ./cmd/gocomicwriter ./tmp_proj
 ```
 
 ## Usage
-Current CLI commands:
-
-```
-gocomicwriter version | -v | --version   Show version
-gocomicwriter init <dir> <name>           Create a new project at <dir> with name <name>
-gocomicwriter open <dir>                  Open project at <dir> and print summary
-gocomicwriter save <dir>                  Save project at <dir> (creates backup)
-gocomicwriter ui [<dir>]                  Launch desktop UI (build with -tags fyne)
-```
-
-Examples:
-- Build locally, then run (PowerShell):
-  - .\bin\gocomicwriter.exe -v
-  - .\bin\gocomicwriter.exe init .\tmp_proj "My Series"
-  - .\bin\gocomicwriter.exe open .\tmp_proj
-  - .\bin\gocomicwriter.exe save .\tmp_proj
-- Or if installed into PATH: gocomicwriter -v
+This build is UI-only. Launch the app as shown above. Optionally pass a project directory path to open on startup.
 
 ### Run the basic UI (experimental)
 The repository includes a minimal desktop UI shell guarded by the `fyne` build tag.
@@ -113,15 +118,15 @@ Build and run directly (no binary):
 
 ```bash
 # Start the UI with no project (Windows PowerShell)
-go run -tags fyne ./cmd/gocomicwriter ui
+go run -tags fyne ./cmd/gocomicwriter
 # Use File → New to create a project, or File → Open to open an existing one.
 
 # Alternatively, open the sample project directly
 # Windows PowerShell
-go run -tags fyne ./cmd/gocomicwriter ui .\tmp_proj
+go run -tags fyne ./cmd/gocomicwriter .\tmp_proj
 
 # On macOS/Linux
-GOFLAGS='' go run -tags fyne ./cmd/gocomicwriter ui ./tmp_proj
+GOFLAGS='' go run -tags fyne ./cmd/gocomicwriter ./tmp_proj
 ```
 
 Or build a binary with UI support:
@@ -137,7 +142,7 @@ go build -tags fyne -o bin/gocomicwriter-ui ./cmd/gocomicwriter
 Then run:
 
 ```bash
-bin/gocomicwriter-ui ui ./tmp_proj
+bin/gocomicwriter-ui ./tmp_proj
 ```
 
 Notes and controls:
@@ -195,26 +200,33 @@ Troubleshooting:
   - On Windows, install a C toolchain (MSYS2/MinGW-w64) so gcc is available, then enable cgo:
     - Start an MSYS2 MinGW64 shell or ensure `gcc` is on PATH in PowerShell.
     - PowerShell: `setx CGO_ENABLED 1` (or for the current session: `$env:CGO_ENABLED='1'`)
-    - Then: `go run -tags fyne ./cmd/gocomicwriter ui .\tmp_proj`
+    - Then: `go run -tags fyne ./cmd/gocomicwriter .\tmp_proj`
   - On macOS: Xcode Command Line Tools are usually sufficient. Ensure `CGO_ENABLED=1`.
   - On Linux: install build-essential (Debian/Ubuntu) or base-devel (Arch), ensure `CGO_ENABLED=1`.
-- If cgo is still disabled, the binary will fall back to a helpful stub error when running the `ui` command with `-tags fyne`.
+- If cgo is still disabled, the binary will fall back to a helpful stub error when running the app built with `-tags fyne`. 
 
 Notes:
-- init scaffolds standard subfolders (script, pages, assets, styles, exports, backups) and writes comic.json.
-- save writes comic.json transactionally and copies the previous manifest into backups/comic.json.YYYYMMDD-HHMMSS.bak.
-- open attempts to read comic.json; if it fails, it falls back to the latest backup.
+- Project operations (New/Open/Save) are available from the UI's File menu. Saves are transactional and copy the previous manifest into backups/comic.json.YYYYMMDD-HHMMSS.bak. Opening a project falls back to the latest valid backup if the manifest is unreadable.
+
+## Common commands (scripts)
+These shell snippets act as “scripts” you can copy-paste. Adjust paths for your OS.
+- Build UI binary (Windows): `go build -tags fyne -o bin\\gocomicwriter.exe ./cmd/gocomicwriter`
+- Build UI binary (macOS/Linux): `go build -tags fyne -o bin/gocomicwriter ./cmd/gocomicwriter`
+- Run UI from source (Windows): `go run -tags fyne ./cmd/gocomicwriter .\\tmp_proj`
+- Run UI from source (macOS/Linux): `go run -tags fyne ./cmd/gocomicwriter ./tmp_proj`
+- Format code: `gofmt -s -w .`
+- Vet: `go vet ./...`
 
 ## Logging configuration
-The CLI uses structured logging (slog). Configure via environment variables:
+The app uses structured logging (slog). Configure via environment variables:
 - GCW_LOG_LEVEL=debug|info|warn|error (default: info)
 - GCW_LOG_FORMAT=console|json (default: console)
 - GCW_LOG_SOURCE=true|false (default: false)
 - GCW_LOG_FILE=<path> (optional; enables rotating JSON file logs)
 
 Examples:
-- PowerShell: `$env:GCW_LOG_LEVEL='debug'; .\bin\gocomicwriter.exe open .\tmp_proj`
-- Bash: `GCW_LOG_FORMAT=json GCW_LOG_FILE=gcw.log gocomicwriter open tmp_proj`
+- PowerShell: `$env:GCW_LOG_LEVEL='debug'; go run -tags fyne ./cmd/gocomicwriter .\tmp_proj`
+- Bash: `GCW_LOG_FORMAT=json GCW_LOG_FILE=gcw.log go run -tags fyne ./cmd/gocomicwriter ./tmp_proj`
 
 ## Crash reports and autosave
 On an unexpected crash (panic), the app will:
@@ -262,13 +274,13 @@ A sample work‑in‑progress manifest lives at tmp_proj/comic.json (with automa
 
 ## Repository layout
 Top‑level and key packages:
-- cmd/gocomicwriter — CLI entrypoint and command dispatch. Build with `-tags fyne` to include the desktop UI command.
+- cmd/gocomicwriter — UI entrypoint/launcher. Build with `-tags fyne` to include the desktop UI.
 - internal/ — core libraries:
   - domain — core data model types (Project, Issue, Page, Panel, Balloon, etc.); mirrors fields in docs/comic.schema.json.
   - storage — project I/O (init/open/save), transactional writes, timestamped backups, autosave snapshot; see doc.go and project.go.
   - log — slog setup and env configuration (GCW_LOG_*), optional rotating file handler.
   - crash — panic recovery and crash reports written to backups/.
-  - version — version string helper used by CLI.
+  - version — version string helper used by the app.
   - vector — vector primitives and scene graph used by the editor: geometry.go (Pt/Rect/Affine2D), node.go (Rect/Ellipse/RoundedRect/Path/Group with transforms and hit testing), path.go (path ops), style.go (Fill/Stroke).
   - textlayout — initial text layout abstractions to support typography and balloons later.
   - ui — desktop UI shell (experimental):
@@ -283,8 +295,10 @@ Top‑level and key packages:
 - Root files:
   - README.md, CHANGELOG.md, LICENSE, CODE_OF_CONDUCT.md, go.mod, go.sum.
 
-Tests:
-- Tests are co-located next to their packages in *_test.go files. Run: `go test ./...`
+## Tests
+- Run all tests: `go test ./...`
+- With coverage: `go test ./... -coverprofile=cover.out` then `go tool cover -html=cover.out`
+- Race detector (recommended): `go test -race ./...`
 
 ## Roadmap and concept
 The full product concept, architecture overview, and milestone plan are maintained here:
@@ -328,9 +342,10 @@ Notes:
 - You must have a CodeStar Connection to GitHub in eu-west-1 and pass its ARN as GitHubConnectionArn.
 - To publish artifacts to S3, create a bucket and pass its name as ReleaseBucketName; otherwise S3 upload is skipped.
 - If your build entry point differs from the template defaults, see “Adjusting build paths/names” in docs/ci-cd-aws.md.
+- Toolchain version: the template’s CodeBuild buildspec uses Go 1.23; this repository targets Go 1.24 (see go.mod). Update the template if you want them aligned.
 
-Optional GitHub Actions:
-- This repo also contains .github/workflows/ci.yml and release.yml for GitHub-native CI and tag-based releases. See docs/ci-cd-aws.md for details on the release workflow and optional S3 publishing via OIDC.
+GitHub Actions (TODO):
+- No GitHub Actions workflows are currently included in this repository. For an example release workflow and setup instructions, see docs/ci-cd-aws.md (section "GitHub Actions-based releases"). If you add workflows later, update this README accordingly.
 
 ## Contributing and conduct
 Contributions are welcome once core foundations stabilize. Until then, feel free to:

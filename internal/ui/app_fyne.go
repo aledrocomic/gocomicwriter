@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -65,11 +66,19 @@ func Run(projectDir string) error {
 		func() fyne.CanvasObject { return widget.NewLabel("") },
 		func(i widget.ListItemID, o fyne.CanvasObject) { o.(*widget.Label).SetText(panelDisplay[i]) },
 	)
-	panelList.OnSelected = func(id widget.ListItemID) { selectedPanel = int(id) }
+	panelList.OnSelected = func(id widget.ListItemID) {
+		selectedPanel = int(id)
+		if selectedPanel >= 0 && selectedPanel < len(panelIDs) {
+			l.Info("panel selected", slog.Int("index", selectedPanel), slog.String("panel_id", panelIDs[selectedPanel]))
+		} else {
+			l.Info("panel selection cleared")
+		}
+	}
 	// Pacing/overlay UI controls
 	pacingLabel := widget.NewLabel("")
 	beatOverlayCheck := widget.NewCheck("Beat Coverage Overlay", func(v bool) {
 		canvasWidget.beatOverlay = v
+		l.Info("toggle beat overlay", slog.Bool("enabled", v))
 		// Re-render current page if available
 		if ph != nil && len(ph.Project.Issues) > 0 && len(ph.Project.Issues[0].Pages) > 0 {
 			canvasWidget.ShowPanels(ph.Project.Issues[0].Pages[0])
@@ -487,29 +496,55 @@ func Run(projectDir string) error {
 		func() fyne.CanvasObject { return widget.NewLabel("") },
 		func(i widget.ListItemID, o fyne.CanvasObject) { o.(*widget.Label).SetText(charNames[i]) },
 	)
-	charList.OnSelected = func(id widget.ListItemID) { selectedChar = int(id) }
+	charList.OnSelected = func(id widget.ListItemID) {
+		selectedChar = int(id)
+		if selectedChar >= 0 && selectedChar < len(charNames) {
+			l.Info("character selected", slog.Int("index", selectedChar), slog.String("name", charNames[selectedChar]))
+		} else {
+			l.Info("character selection cleared")
+		}
+	}
 	addCharEntry := widget.NewEntry()
 	addCharEntry.SetPlaceHolder("Add character name")
-	addCharBtn := widget.NewButton("Add", func() {
+	addChar := func(name string) {
 		if ph == nil {
 			dialog.ShowInformation("Characters", "Open a project first.", w)
 			return
 		}
-		name := strings.TrimSpace(addCharEntry.Text)
+		name = strings.TrimSpace(name)
 		if name == "" {
+			dialog.ShowInformation("Characters", "Please enter a character name.", w)
+			w.Canvas().Focus(addCharEntry)
 			return
 		}
+		l.Info("add character", slog.String("name", name))
 		ph.Project.Bible.Characters = append(ph.Project.Bible.Characters, domain.BibleCharacter{Name: name})
+		if err := storage.Save(ph); err != nil {
+			l.Error("save after add character", slog.Any("err", err))
+			dialog.ShowError(err, w)
+			return
+		}
 		addCharEntry.SetText("")
 		refreshBible()
-	})
+		status.SetText("Character added.")
+	}
+	addCharEntry.OnSubmitted = func(s string) { addChar(s) }
+	addCharBtn := widget.NewButton("Add", func() { addChar(addCharEntry.Text) })
 	delCharBtn := widget.NewButton("Delete", func() {
 		if ph == nil || selectedChar < 0 || selectedChar >= len(ph.Project.Bible.Characters) {
 			return
 		}
+		name := ph.Project.Bible.Characters[selectedChar].Name
+		l.Info("delete character", slog.Int("index", selectedChar), slog.String("name", name))
 		ph.Project.Bible.Characters = append(ph.Project.Bible.Characters[:selectedChar], ph.Project.Bible.Characters[selectedChar+1:]...)
+		if err := storage.Save(ph); err != nil {
+			l.Error("save after delete character", slog.Any("err", err))
+			dialog.ShowError(err, w)
+			return
+		}
 		selectedChar = -1
 		refreshBible()
+		status.SetText("Character deleted.")
 	})
 	charBox := container.NewVBox(widget.NewLabel("Characters"), charList, container.NewHBox(addCharEntry, addCharBtn, delCharBtn))
 
@@ -519,29 +554,55 @@ func Run(projectDir string) error {
 		func() fyne.CanvasObject { return widget.NewLabel("") },
 		func(i widget.ListItemID, o fyne.CanvasObject) { o.(*widget.Label).SetText(locNames[i]) },
 	)
-	locList.OnSelected = func(id widget.ListItemID) { selectedLoc = int(id) }
+	locList.OnSelected = func(id widget.ListItemID) {
+		selectedLoc = int(id)
+		if selectedLoc >= 0 && selectedLoc < len(locNames) {
+			l.Info("location selected", slog.Int("index", selectedLoc), slog.String("name", locNames[selectedLoc]))
+		} else {
+			l.Info("location selection cleared")
+		}
+	}
 	addLocEntry := widget.NewEntry()
 	addLocEntry.SetPlaceHolder("Add location name")
-	addLocBtn := widget.NewButton("Add", func() {
+	addLocation := func(name string) {
 		if ph == nil {
 			dialog.ShowInformation("Locations", "Open a project first.", w)
 			return
 		}
-		name := strings.TrimSpace(addLocEntry.Text)
+		name = strings.TrimSpace(name)
 		if name == "" {
+			dialog.ShowInformation("Locations", "Please enter a location name.", w)
+			w.Canvas().Focus(addLocEntry)
 			return
 		}
+		l.Info("add location", slog.String("name", name))
 		ph.Project.Bible.Locations = append(ph.Project.Bible.Locations, domain.BibleLocation{Name: name})
+		if err := storage.Save(ph); err != nil {
+			l.Error("save after add location", slog.Any("err", err))
+			dialog.ShowError(err, w)
+			return
+		}
 		addLocEntry.SetText("")
 		refreshBible()
-	})
+		status.SetText("Location added.")
+	}
+	addLocEntry.OnSubmitted = func(s string) { addLocation(s) }
+	addLocBtn := widget.NewButton("Add", func() { addLocation(addLocEntry.Text) })
 	delLocBtn := widget.NewButton("Delete", func() {
 		if ph == nil || selectedLoc < 0 || selectedLoc >= len(ph.Project.Bible.Locations) {
 			return
 		}
+		name := ph.Project.Bible.Locations[selectedLoc].Name
+		l.Info("delete location", slog.Int("index", selectedLoc), slog.String("name", name))
 		ph.Project.Bible.Locations = append(ph.Project.Bible.Locations[:selectedLoc], ph.Project.Bible.Locations[selectedLoc+1:]...)
+		if err := storage.Save(ph); err != nil {
+			l.Error("save after delete location", slog.Any("err", err))
+			dialog.ShowError(err, w)
+			return
+		}
 		selectedLoc = -1
 		refreshBible()
+		status.SetText("Location deleted.")
 	})
 	locBox := container.NewVBox(widget.NewLabel("Locations"), locList, container.NewHBox(addLocEntry, addLocBtn, delLocBtn))
 
@@ -551,29 +612,55 @@ func Run(projectDir string) error {
 		func() fyne.CanvasObject { return widget.NewLabel("") },
 		func(i widget.ListItemID, o fyne.CanvasObject) { o.(*widget.Label).SetText(tagNames[i]) },
 	)
-	tagList.OnSelected = func(id widget.ListItemID) { selectedTag = int(id) }
+	tagList.OnSelected = func(id widget.ListItemID) {
+		selectedTag = int(id)
+		if selectedTag >= 0 && selectedTag < len(tagNames) {
+			l.Info("tag selected", slog.Int("index", selectedTag), slog.String("name", tagNames[selectedTag]))
+		} else {
+			l.Info("tag selection cleared")
+		}
+	}
 	addTagEntry := widget.NewEntry()
 	addTagEntry.SetPlaceHolder("Add tag")
-	addTagBtn := widget.NewButton("Add", func() {
+	addTag := func(name string) {
 		if ph == nil {
 			dialog.ShowInformation("Tags", "Open a project first.", w)
 			return
 		}
-		name := strings.TrimSpace(addTagEntry.Text)
+		name = strings.TrimSpace(name)
 		if name == "" {
+			dialog.ShowInformation("Tags", "Please enter a tag.", w)
+			w.Canvas().Focus(addTagEntry)
 			return
 		}
+		l.Info("add tag", slog.String("name", name))
 		ph.Project.Bible.Tags = append(ph.Project.Bible.Tags, domain.BibleTag{Name: name})
+		if err := storage.Save(ph); err != nil {
+			l.Error("save after add tag", slog.Any("err", err))
+			dialog.ShowError(err, w)
+			return
+		}
 		addTagEntry.SetText("")
 		refreshBible()
-	})
+		status.SetText("Tag added.")
+	}
+	addTagEntry.OnSubmitted = func(s string) { addTag(s) }
+	addTagBtn := widget.NewButton("Add", func() { addTag(addTagEntry.Text) })
 	delTagBtn := widget.NewButton("Delete", func() {
 		if ph == nil || selectedTag < 0 || selectedTag >= len(ph.Project.Bible.Tags) {
 			return
 		}
+		name := ph.Project.Bible.Tags[selectedTag].Name
+		l.Info("delete tag", slog.Int("index", selectedTag), slog.String("name", name))
 		ph.Project.Bible.Tags = append(ph.Project.Bible.Tags[:selectedTag], ph.Project.Bible.Tags[selectedTag+1:]...)
+		if err := storage.Save(ph); err != nil {
+			l.Error("save after delete tag", slog.Any("err", err))
+			dialog.ShowError(err, w)
+			return
+		}
 		selectedTag = -1
 		refreshBible()
+		status.SetText("Tag deleted.")
 	})
 	tagBox := container.NewVBox(widget.NewLabel("Tags"), tagList, container.NewHBox(addTagEntry, addTagBtn, delTagBtn))
 
@@ -591,6 +678,7 @@ func Run(projectDir string) error {
 
 	// Build menus
 	newItem := fyne.NewMenuItem("New…", func() {
+		l.Info("menu: new project")
 		// Step 1: choose a folder for the new project
 		fd := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
 			if err != nil {
@@ -598,9 +686,11 @@ func Run(projectDir string) error {
 				return
 			}
 			if uri == nil {
+				l.Info("new project canceled at folder selection")
 				return
 			}
 			abs := uri.Path()
+			l.Info("new project folder selected", slog.String("root", abs))
 			// Step 2: prompt for project name
 			nameEntry := widget.NewEntry()
 			nameEntry.SetPlaceHolder("Project Name")
@@ -608,6 +698,7 @@ func Run(projectDir string) error {
 				widget.NewFormItem("Name", nameEntry),
 			}, func(ok bool) {
 				if !ok {
+					l.Info("new project canceled at name prompt")
 					return
 				}
 				name := strings.TrimSpace(nameEntry.Text)
@@ -615,6 +706,7 @@ func Run(projectDir string) error {
 					dialog.ShowInformation("New Project", "Please enter a project name.", w)
 					return
 				}
+				l.Info("creating project", slog.String("name", name), slog.String("root", abs))
 				proj := domain.Project{Name: name, Issues: []domain.Issue{}}
 				h, ierr := storage.InitProject(abs, proj)
 				if ierr != nil {
@@ -638,15 +730,18 @@ func Run(projectDir string) error {
 	})
 
 	openItem := fyne.NewMenuItem("Open…", func() {
+		l.Info("menu: open project")
 		fd := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
 			if err != nil {
 				l.Error("open dialog error", slog.Any("err", err))
 				return
 			}
 			if uri == nil {
+				l.Info("open project canceled at folder selection")
 				return
 			}
 			abs := uri.Path()
+			l.Info("open project folder selected", slog.String("root", abs))
 			if err := openProject(abs, &ph, w, l, status); err != nil {
 				l.Error("open project failed", slog.Any("err", err))
 				dialog.ShowError(err, w)
@@ -660,6 +755,7 @@ func Run(projectDir string) error {
 					if len(ph.Project.Issues) > 0 {
 						canvasWidget.ApplyIssue(ph.Project.Issues[0])
 					}
+					l.Info("project opened", slog.String("name", ph.Project.Name))
 				} else {
 					l.Error("read script failed", slog.Any("err", rerr))
 				}
@@ -668,6 +764,7 @@ func Run(projectDir string) error {
 		fd.Show()
 	})
 	saveItem := fyne.NewMenuItem("Save", func() {
+		l.Info("menu: save")
 		if ph == nil {
 			dialog.ShowInformation("Save", "No project open.", w)
 			return
@@ -682,30 +779,43 @@ func Run(projectDir string) error {
 			dialog.ShowError(err, w)
 			return
 		}
+		l.Info("save completed", slog.String("manifest", ph.ManifestPath))
 		status.SetText("Saved project (manifest + script).")
 	})
-	exitItem := fyne.NewMenuItem("Exit", func() { w.Close() })
+	exitItem := fyne.NewMenuItem("Exit", func() {
+		l.Info("menu: exit")
+		w.Close()
+	})
 
 	fileMenu := fyne.NewMenu("File", newItem, openItem, saveItem, fyne.NewMenuItemSeparator(), exitItem)
 
 	// Issue menu with setup dialog
 	issueSetupItem := fyne.NewMenuItem("Issue Setup…", func() {
 		if ph == nil {
+			l.Info("menu: issue setup (no project)")
 			dialog.ShowInformation("Issue Setup", "No project open.", w)
 			return
 		}
+		l.Info("menu: issue setup")
 		showIssueSetupDialog(w, ph, canvasWidget, status, l)
 	})
 	issueMenu := fyne.NewMenu("Issue", issueSetupItem)
 
 	aboutItem := fyne.NewMenuItem("About Go Comic Writer", func() {
+		l.Info("menu: about")
 		exe, _ := os.Executable()
 		cwd, _ := os.Getwd()
 		info := fmt.Sprintf("Go Comic Writer\nVersion: %s\nOS: %s\nArch: %s\nGo: %s\nExecutable: %s\nWorking Dir: %s",
 			version.String(), runtime.GOOS, runtime.GOARCH, runtime.Version(), exe, cwd)
 		dialog.ShowInformation("Installation Environment", info, w)
 	})
-	aboutMenu := fyne.NewMenu("About", aboutItem)
+	copyrightItem := fyne.NewMenuItem("Copyright…", func() {
+		l.Info("menu: copyright")
+		currentYear := time.Now().Year()
+		msg := fmt.Sprintf("Go Comic Writer\nCopyright © 2023-%d The Go Comic Writer Authors\n\nLicensed under the Apache License, Version 2.0.\nSee the LICENSE file for details.", currentYear)
+		dialog.ShowInformation("Copyright", msg, w)
+	})
+	aboutMenu := fyne.NewMenu("About", aboutItem, copyrightItem)
 
 	w.SetMainMenu(fyne.NewMainMenu(fileMenu, issueMenu, aboutMenu))
 
