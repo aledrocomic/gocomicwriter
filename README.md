@@ -20,6 +20,7 @@ This repository currently provides a development skeleton: a desktop UI, an evol
 - Project manifest (comic.json) and schema
 - Repository layout
 - Tests
+- Developer Guide (for contributors): docs/developer-guide.md
 - Roadmap and concept
 - CI/CD and releases
 - Contributing and conduct
