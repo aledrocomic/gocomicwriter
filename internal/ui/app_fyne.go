@@ -28,10 +28,13 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
+	fstorage "fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/widget"
 
 	"gocomicwriter/internal/crash"
 	"gocomicwriter/internal/domain"
+	"gocomicwriter/internal/export"
 	applog "gocomicwriter/internal/log"
 	"gocomicwriter/internal/script"
 	"gocomicwriter/internal/storage"
@@ -50,7 +53,17 @@ func Run(projectDir string) error {
 
 	fyneApp := app.NewWithID("gocomicwriter")
 	w := fyneApp.NewWindow("Go Comic Writer")
-	w.Resize(fyne.NewSize(1200, 800))
+	// Restore window size from preferences (with sane minimums)
+	prefs := fyneApp.Preferences()
+	winW := prefs.IntWithFallback("window.width", 1200)
+	winH := prefs.IntWithFallback("window.height", 800)
+	if winW < 800 {
+		winW = 800
+	}
+	if winH < 600 {
+		winH = 600
+	}
+	w.Resize(fyne.NewSize(float32(winW), float32(winH)))
 
 	status := widget.NewLabel("Ready")
 	canvasWidget := NewPageCanvas()
@@ -61,6 +74,7 @@ func Run(projectDir string) error {
 	panelDisplay := []string{}
 	panelIDs := []string{}
 	selectedPanel := -1
+	panelFilter := ""
 	panelList := widget.NewList(
 		func() int { return len(panelDisplay) },
 		func() fyne.CanvasObject { return widget.NewLabel("") },
@@ -84,6 +98,10 @@ func Run(projectDir string) error {
 			canvasWidget.ShowPanels(ph.Project.Issues[0].Pages[0])
 		}
 	})
+	// Restore overlay preference
+	savedOverlay := prefs.BoolWithFallback("overlay.beats", false)
+	canvasWidget.beatOverlay = savedOverlay
+	beatOverlayCheck.SetChecked(savedOverlay)
 	refreshPanelsUI := func() {
 		panelDisplay = panelDisplay[:0]
 		panelIDs = panelIDs[:0]
@@ -97,12 +115,15 @@ func Run(projectDir string) error {
 		panels := append([]domain.Panel(nil), pg.Panels...)
 		sort.Slice(panels, func(i, j int) bool { return panels[i].ZOrder < panels[j].ZOrder })
 		for _, p := range panels {
-			panelIDs = append(panelIDs, p.ID)
 			d := fmt.Sprintf("z:%d %s (%.0fx%.0f @%.0f,%.0f)", p.ZOrder, p.ID, p.Geometry.Width, p.Geometry.Height, p.Geometry.X, p.Geometry.Y)
 			if strings.TrimSpace(p.Notes) != "" {
 				d += " — " + p.Notes
 			}
-			panelDisplay = append(panelDisplay, d)
+			// Apply filter if set
+			if pf := strings.ToLower(strings.TrimSpace(panelFilter)); pf == "" || strings.Contains(strings.ToLower(d), pf) || strings.Contains(strings.ToLower(p.ID), pf) || strings.Contains(strings.ToLower(p.Notes), pf) {
+				panelIDs = append(panelIDs, p.ID)
+				panelDisplay = append(panelDisplay, d)
+			}
 		}
 		panelList.Refresh()
 		// Update canvas rendering from model
@@ -217,10 +238,18 @@ func Run(projectDir string) error {
 		}, w)
 		form.Show()
 	})
+	// Panel quick filter
+	panelFilterEntry := widget.NewEntry()
+	panelFilterEntry.SetPlaceHolder("Filter panels…")
+	panelFilterEntry.OnChanged = func(s string) {
+		panelFilter = strings.ToLower(strings.TrimSpace(s))
+		refreshPanelsUI()
+	}
+
 	right := container.NewBorder(nil, nil, nil, nil, container.NewVBox(
 		widget.NewLabel("Inspector"), widget.NewSeparator(),
 		pacingLabel, beatOverlayCheck, widget.NewSeparator(),
-		widget.NewLabel("Panels (Page 1)"), panelList,
+		widget.NewLabel("Panels (Page 1)"), panelFilterEntry, panelList,
 		container.NewHBox(btnAddPanel, btnUp, btnDown, btnEdit),
 	))
 	canvasCenter := container.NewMax(canvasWidget)
@@ -677,6 +706,7 @@ func Run(projectDir string) error {
 	w.SetContent(content)
 
 	// Build menus
+	var closeProjItem *fyne.MenuItem
 	newItem := fyne.NewMenuItem("New…", func() {
 		l.Info("menu: new project")
 		// Step 1: choose a folder for the new project
@@ -717,6 +747,8 @@ func Run(projectDir string) error {
 				ph = h
 				w.SetTitle(fmt.Sprintf("Go Comic Writer — %s", h.Project.Name))
 				status.SetText(fmt.Sprintf("Created project: %s", abs))
+				// Enable Close Project now that a project is open
+				closeProjItem.Disabled = false
 				// Clear any existing script in the editor for a fresh start
 				scriptEntry.SetText("")
 				updateOutline("")
@@ -756,6 +788,8 @@ func Run(projectDir string) error {
 						canvasWidget.ApplyIssue(ph.Project.Issues[0])
 					}
 					l.Info("project opened", slog.String("name", ph.Project.Name))
+					// Enable Close Project as a project is now open
+					closeProjItem.Disabled = false
 				} else {
 					l.Error("read script failed", slog.Any("err", rerr))
 				}
@@ -782,12 +816,40 @@ func Run(projectDir string) error {
 		l.Info("save completed", slog.String("manifest", ph.ManifestPath))
 		status.SetText("Saved project (manifest + script).")
 	})
-	exitItem := fyne.NewMenuItem("Exit", func() {
-		l.Info("menu: exit")
-		w.Close()
+	closeProjItem = fyne.NewMenuItem("Close Project", func() {
+		if ph == nil {
+			return
+		}
+		l.Info("menu: close project")
+		// Clear project state and UI without closing the window
+		ph = nil
+		w.SetTitle("Go Comic Writer")
+		status.SetText("Project closed.")
+		// Clear editors and lists
+		scriptEntry.SetText("")
+		updateOutline("")
+		panelFilter = ""
+		panelIDs = panelIDs[:0]
+		panelDisplay = panelDisplay[:0]
+		selectedPanel = -1
+		panelList.Refresh()
+		pacingLabel.SetText("")
+		// Clear canvas content
+		canvasWidget.scene = nil
+		canvasWidget.selected = -1
+		canvasWidget.Refresh()
+		// Disable this menu entry as no project is open now
+		closeProjItem.Disabled = true
 	})
+	// Initially disabled when no project is open
+	closeProjItem.Disabled = true
+	// Keyboard shortcuts
+	newItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyN, Modifier: fyne.KeyModifierControl}
+	openItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyO, Modifier: fyne.KeyModifierControl}
+	saveItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyS, Modifier: fyne.KeyModifierControl}
+	closeProjItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyW, Modifier: fyne.KeyModifierControl}
 
-	fileMenu := fyne.NewMenu("File", newItem, openItem, saveItem, fyne.NewMenuItemSeparator(), exitItem)
+	fileMenu := fyne.NewMenu("File", newItem, openItem, saveItem, fyne.NewMenuItemSeparator(), closeProjItem)
 
 	// Issue menu with setup dialog
 	issueSetupItem := fyne.NewMenuItem("Issue Setup…", func() {
@@ -800,6 +862,127 @@ func Run(projectDir string) error {
 		showIssueSetupDialog(w, ph, canvasWidget, status, l)
 	})
 	issueMenu := fyne.NewMenu("Issue", issueSetupItem)
+
+	// Export menu
+	exportPDFItem := fyne.NewMenuItem("Export Issue as PDF…", func() {
+		if ph == nil {
+			l.Info("menu: export pdf (no project)")
+			dialog.ShowInformation("Export PDF", "No project open.", w)
+			return
+		}
+		save := dialog.NewFileSave(func(uc fyne.URIWriteCloser, err error) {
+			if err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			if uc == nil {
+				return
+			}
+			outPath := uc.URI().Path()
+			_ = uc.Close()
+			// Run synchronously on the UI thread to avoid Driver().RunOnMain incompatibilities
+			err = export.ExportIssuePDF(ph, 0, outPath, export.PDFOptions{IncludeGuides: true})
+			if err != nil {
+				dialog.ShowError(err, w)
+			} else {
+				dialog.ShowInformation("Export PDF", "Exported to "+outPath, w)
+			}
+		}, w)
+		defName := "issue-1.pdf"
+		if ph != nil && len(ph.Project.Issues) > 0 {
+			defName = fmt.Sprintf("issue-%d.pdf", 1)
+		}
+		save.SetFileName(defName)
+		save.SetFilter(fstorage.NewExtensionFileFilter([]string{".pdf"}))
+		save.Show()
+	})
+
+	exportPNGItem := fyne.NewMenuItem("Export Issue as PNG pages…", func() {
+		if ph == nil {
+			l.Info("menu: export png (no project)")
+			dialog.ShowInformation("Export PNG", "No project open.", w)
+			return
+		}
+		fd := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
+			if err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			if uri == nil {
+				return
+			}
+			outDir := uri.Path()
+			// Run synchronously on the UI thread
+			err = export.ExportIssuePNGPages(ph, 0, outDir, export.PNGOptions{IncludeGuides: true})
+			if err != nil {
+				dialog.ShowError(err, w)
+			} else {
+				dialog.ShowInformation("Export PNG", "Exported pages to "+outDir, w)
+			}
+		}, w)
+		fd.Show()
+	})
+
+	exportSVGItem := fyne.NewMenuItem("Export Issue as SVG pages…", func() {
+		if ph == nil {
+			l.Info("menu: export svg (no project)")
+			dialog.ShowInformation("Export SVG", "No project open.", w)
+			return
+		}
+		fd := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
+			if err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			if uri == nil {
+				return
+			}
+			outDir := uri.Path()
+			// Run synchronously on the UI thread
+			err = export.ExportIssueSVGPages(ph, 0, outDir, export.SVGOptions{IncludeGuides: true})
+			if err != nil {
+				dialog.ShowError(err, w)
+			} else {
+				dialog.ShowInformation("Export SVG", "Exported pages to "+outDir, w)
+			}
+		}, w)
+		fd.Show()
+	})
+
+	exportCBZItem := fyne.NewMenuItem("Export Issue as CBZ…", func() {
+		if ph == nil {
+			l.Info("menu: export cbz (no project)")
+			dialog.ShowInformation("Export CBZ", "No project open.", w)
+			return
+		}
+		save := dialog.NewFileSave(func(uc fyne.URIWriteCloser, err error) {
+			if err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			if uc == nil {
+				return
+			}
+			outPath := uc.URI().Path()
+			_ = uc.Close()
+			// Run synchronously on the UI thread
+			err = export.ExportIssueCBZ(ph, 0, outPath, export.CBZOptions{IncludeGuides: true})
+			if err != nil {
+				dialog.ShowError(err, w)
+			} else {
+				dialog.ShowInformation("Export CBZ", "Exported to "+outPath, w)
+			}
+		}, w)
+		defName := "issue-1.cbz"
+		if ph != nil && len(ph.Project.Issues) > 0 {
+			defName = fmt.Sprintf("issue-%d.cbz", 1)
+		}
+		save.SetFileName(defName)
+		save.SetFilter(fstorage.NewExtensionFileFilter([]string{".cbz"}))
+		save.Show()
+	})
+
+	exportMenu := fyne.NewMenu("Export", exportPDFItem, exportPNGItem, exportSVGItem, exportCBZItem)
 
 	aboutItem := fyne.NewMenuItem("About Go Comic Writer", func() {
 		l.Info("menu: about")
@@ -817,7 +1000,16 @@ func Run(projectDir string) error {
 	})
 	aboutMenu := fyne.NewMenu("About", aboutItem, copyrightItem)
 
-	w.SetMainMenu(fyne.NewMainMenu(fileMenu, issueMenu, aboutMenu))
+	w.SetMainMenu(fyne.NewMainMenu(fileMenu, issueMenu, exportMenu, aboutMenu))
+
+	// Persist preferences on close
+	w.SetCloseIntercept(func() {
+		sz := w.Canvas().Size()
+		prefs.SetInt("window.width", int(sz.Width))
+		prefs.SetInt("window.height", int(sz.Height))
+		prefs.SetBool("overlay.beats", canvasWidget.beatOverlay)
+		w.Close()
+	})
 
 	// Try to open a project if provided
 	if projectDir != "" {

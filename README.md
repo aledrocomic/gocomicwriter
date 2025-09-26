@@ -5,7 +5,7 @@ A Go-powered project aiming to become a writing, planning, and lettering toolcha
 This repository currently provides a development skeleton: a desktop UI, an evolving domain model, and a public JSON schema for the project manifest. The product concept and roadmap live in docs/go_comic_writer_concept.md.
 
 - Vision: Empower comic creators to go from script to lettered pages in one streamlined, offline‑first tool.
-- Status: Early stage (0.5.0‑dev). Not production‑ready.
+- Status: Early stage (0.6.0‑dev). Not production‑ready.
 - License: Apache 2.0
 
 ## Contents
@@ -56,13 +56,17 @@ Entry points:
 - Crash safety: on panic, write a crash report and autosave snapshot; on open, fall back to the latest valid backup if the manifest is unreadable.
 - Structured logging via Go's slog with simple env configuration; optional rotating file via GCW_LOG_FILE.
 - Core domain model in internal/domain and a public JSON schema at docs/comic.schema.json.
-- Basic desktop UI shell (behind build tag `fyne`) with a placeholder canvas editor that shows page/trim/bleed guides, simple pan/zoom, and File→New/Open/Save. The UI can start without a project and lets you create one from within the app.
+- Basic desktop UI shell (behind build tag `fyne`) with a canvas editor that shows page/trim/bleed guides, pan/zoom, and File→New/Open/Save.
+  - Keyboard shortcuts: Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Q.
+  - Preferences persisted: window size and the Beat Coverage overlay toggle are saved between sessions.
+  - The UI can start without a project and lets you create one from within the app.
 - Issue setup dialog: configure trim size, bleed, DPI, and reading direction (LTR/RTL) from the UI.
-- Grid templates and custom grids per page: choose from presets (e.g., 3x3) or enter a custom spec; apply per page.
-- Panels: create rectangular panels on the page canvas, reorder their Z position (front/back), and edit basic metadata (ID, notes).
+- Page grids: supported via the page's `grid` property in the manifest (e.g., `"3x3"`) and previewed on the canvas; in-UI grid editing is planned.
+- Panels: add from the Inspector (Add Panel), reorder Z with Move Up/Down, and edit metadata (ID, notes). A quick filter above the panel list helps find panels by ID/notes/text.
 - Script integration (experimental): structured editor with outline and beat tagging; beats can be linked to panels; unmapped beat warnings in outline.
 - Beat coverage overlay and page‑turn pacing indicators (experimental) in the canvas to aid layout/planning.
-- About menu with environment info (Go version, OS/arch, cgo/fyne status) for diagnostics.
+- Exporters (UI): Export menu for PDF (multi-page), PNG pages, SVG pages, and CBZ package. Exports include trim/bleed guides and respect issue settings.
+- About menu with environment info (Go version, OS/arch, cgo/fyne status) and a Copyright dialog.
 - Sample project manifest at tmp_proj/comic.json (with backups under tmp_proj/backups/).
 - Unit tests for core packages (storage, logging, crash, version, schema).
 
@@ -74,8 +78,8 @@ Entry points:
 - Selection and transform handles enabling move, scale (corner handles), and rotate (rotation handle).
 
 What’s not here yet:
-- Rendering/lettering engine (beyond the placeholder canvas) and exporters.
-- Exporters (PDF/PNG/SVG/CBZ).
+- Full-featured rendering/lettering engine and pro typography tools in the editor.
+- Advanced export options and presets in the UI (basic PDF/PNG/SVG/CBZ exporters are implemented).
 
 ## Install and quick start
 Prerequisites:
@@ -146,20 +150,13 @@ bin/gocomicwriter-ui ./tmp_proj
 ```
 
 Notes and controls:
-- File → New creates a new project from the UI; File → Open selects a project folder; File → Save writes comic.json (with a timestamped backup of the previous manifest).
+- File → New/Open/Save (shortcuts: Ctrl+N/Ctrl+O/Ctrl+S; Close Project: Ctrl+W; Quit: Ctrl+Q). Saves are transactional with timestamped backups.
 - Issue → Setup opens the Issue Setup dialog (trim size, bleed, DPI, reading direction). Changes apply to the current issue.
-- Issue → Grid lets you apply a grid template or enter a custom grid spec for the current page.
-  - Grid spec format: Rows x Cols with optional margins/gutters, e.g., `3x3`, `2x3 m:5mm g:4mm`. Custom specs are parsed and drawn on the canvas.
-- Panels: use the toolbar or context menu to create a panel; select a panel to see transform handles.
-  - Drag to move; corner handles to scale; rotation handle above to rotate.
-  - Panels maintain a Z‑order; use Bring Forward/Send Backward to reorder.
-  - Edit panel metadata (ID, notes) from the side panel or a dialog.
-- Script integration: beats (from the Script tab) can be linked to selected panels; unmapped beats are highlighted in the outline.
-- Overlays: toggle Beat Coverage and Page‑Turn Pacing indicators from the View/Overlays menu.
-- About → About Go Comic Writer shows environment info (version, OS/arch, cgo/fyne) useful for troubleshooting.
-- Center canvas shows a page rectangle with bleed (blue) and trim (red) guides.
-- Drag with mouse to pan.
-- Ctrl + Mouse Wheel to zoom in/out.
+- Export menu: Export Issue as PDF…, PNG pages…, SVG pages…, or CBZ…. You will be prompted for a file or folder; exports include trim/bleed guides and respect issue settings.
+- Panels (Inspector on the right): use Add Panel to create; select in the list to edit. Use Move Up/Down to change Z-order, Edit Metadata to change ID/notes, and the quick filter to find panels.
+- Script integration: see the Script tab. Beats can be linked to panels; unmapped beats are highlighted in the outline.
+- Overlays and pacing: toggle Beat Coverage Overlay in the Inspector; pacing info for the current page is shown above the panel list.
+- Canvas: page rectangle with bleed (blue) and trim (red) guides. Drag on empty area to pan. Mouse Wheel to zoom in/out.
 - Window title shows the project name when opened.
 
 ### Script Editor (experimental)
@@ -214,6 +211,7 @@ These shell snippets act as “scripts” you can copy-paste. Adjust paths for y
 - Build UI binary (macOS/Linux): `go build -tags fyne -o bin/gocomicwriter ./cmd/gocomicwriter`
 - Run UI from source (Windows): `go run -tags fyne ./cmd/gocomicwriter .\\tmp_proj`
 - Run UI from source (macOS/Linux): `go run -tags fyne ./cmd/gocomicwriter ./tmp_proj`
+- Exports: use the app's Export menu (CLI export commands have been removed).
 - Format code: `gofmt -s -w .`
 - Vet: `go vet ./...`
 

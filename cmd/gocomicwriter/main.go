@@ -11,6 +11,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	applog "gocomicwriter/internal/log"
 	"gocomicwriter/internal/ui"
@@ -19,6 +20,14 @@ import (
 func main() {
 	// Initialize structured logging using environment defaults
 	applog.Init(applog.FromEnv())
+
+	if len(os.Args) >= 2 {
+		sub := strings.ToLower(os.Args[1])
+		if strings.HasPrefix(sub, "export") {
+			fmt.Println("Command-line exports have been moved to the UI. Please use the Export menu.")
+			os.Exit(2)
+		}
+	}
 
 	// UI-only launcher: optional first arg is a project directory to open.
 	var dir string
