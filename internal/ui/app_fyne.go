@@ -982,7 +982,41 @@ func Run(projectDir string) error {
 		save.Show()
 	})
 
-	exportMenu := fyne.NewMenu("Export", exportPDFItem, exportPNGItem, exportSVGItem, exportCBZItem)
+	// EPUB export menu entry
+	exportEPUBItem := fyne.NewMenuItem("Export Issue as EPUB…", func() {
+		if ph == nil {
+			l.Info("menu: export epub (no project)")
+			dialog.ShowInformation("Export EPUB", "No project open.", w)
+			return
+		}
+		save := dialog.NewFileSave(func(uc fyne.URIWriteCloser, err error) {
+			if err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			if uc == nil {
+				return
+			}
+			outPath := uc.URI().Path()
+			_ = uc.Close()
+			// Run synchronously on the UI thread
+			err = export.ExportIssueEPUB(ph, 0, outPath, export.EPUBOptions{IncludeGuides: true, Language: "en", FixedLayout: true})
+			if err != nil {
+				dialog.ShowError(err, w)
+			} else {
+				dialog.ShowInformation("Export EPUB", "Exported to "+outPath, w)
+			}
+		}, w)
+		defName := "issue-1.epub"
+		if ph != nil && len(ph.Project.Issues) > 0 {
+			defName = fmt.Sprintf("issue-%d.epub", 1)
+		}
+		save.SetFileName(defName)
+		save.SetFilter(fstorage.NewExtensionFileFilter([]string{".epub"}))
+		save.Show()
+	})
+
+	exportMenu := fyne.NewMenu("Export", exportPDFItem, exportPNGItem, exportSVGItem, exportCBZItem, exportEPUBItem)
 
 	aboutItem := fyne.NewMenuItem("About Go Comic Writer", func() {
 		l.Info("menu: about")
