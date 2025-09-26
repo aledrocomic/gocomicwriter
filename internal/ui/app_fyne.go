@@ -706,6 +706,7 @@ func Run(projectDir string) error {
 	w.SetContent(content)
 
 	// Build menus
+	var closeProjItem *fyne.MenuItem
 	newItem := fyne.NewMenuItem("New…", func() {
 		l.Info("menu: new project")
 		// Step 1: choose a folder for the new project
@@ -746,6 +747,8 @@ func Run(projectDir string) error {
 				ph = h
 				w.SetTitle(fmt.Sprintf("Go Comic Writer — %s", h.Project.Name))
 				status.SetText(fmt.Sprintf("Created project: %s", abs))
+				// Enable Close Project now that a project is open
+				closeProjItem.Disabled = false
 				// Clear any existing script in the editor for a fresh start
 				scriptEntry.SetText("")
 				updateOutline("")
@@ -785,6 +788,8 @@ func Run(projectDir string) error {
 						canvasWidget.ApplyIssue(ph.Project.Issues[0])
 					}
 					l.Info("project opened", slog.String("name", ph.Project.Name))
+					// Enable Close Project as a project is now open
+					closeProjItem.Disabled = false
 				} else {
 					l.Error("read script failed", slog.Any("err", rerr))
 				}
@@ -811,17 +816,40 @@ func Run(projectDir string) error {
 		l.Info("save completed", slog.String("manifest", ph.ManifestPath))
 		status.SetText("Saved project (manifest + script).")
 	})
-	closeWinItem := fyne.NewMenuItem("Close Window", func() {
-		l.Info("menu: close window")
-		w.Close()
+	closeProjItem = fyne.NewMenuItem("Close Project", func() {
+		if ph == nil {
+			return
+		}
+		l.Info("menu: close project")
+		// Clear project state and UI without closing the window
+		ph = nil
+		w.SetTitle("Go Comic Writer")
+		status.SetText("Project closed.")
+		// Clear editors and lists
+		scriptEntry.SetText("")
+		updateOutline("")
+		panelFilter = ""
+		panelIDs = panelIDs[:0]
+		panelDisplay = panelDisplay[:0]
+		selectedPanel = -1
+		panelList.Refresh()
+		pacingLabel.SetText("")
+		// Clear canvas content
+		canvasWidget.scene = nil
+		canvasWidget.selected = -1
+		canvasWidget.Refresh()
+		// Disable this menu entry as no project is open now
+		closeProjItem.Disabled = true
 	})
+	// Initially disabled when no project is open
+	closeProjItem.Disabled = true
 	// Keyboard shortcuts
 	newItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyN, Modifier: fyne.KeyModifierControl}
 	openItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyO, Modifier: fyne.KeyModifierControl}
 	saveItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyS, Modifier: fyne.KeyModifierControl}
-	closeWinItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyW, Modifier: fyne.KeyModifierControl}
+	closeProjItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyW, Modifier: fyne.KeyModifierControl}
 
-	fileMenu := fyne.NewMenu("File", newItem, openItem, saveItem, fyne.NewMenuItemSeparator(), closeWinItem)
+	fileMenu := fyne.NewMenu("File", newItem, openItem, saveItem, fyne.NewMenuItemSeparator(), closeProjItem)
 
 	// Issue menu with setup dialog
 	issueSetupItem := fyne.NewMenuItem("Issue Setup…", func() {
