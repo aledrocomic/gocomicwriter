@@ -6,6 +6,18 @@ The format is based on Keep a Changelog (https://keepachangelog.com/en/1.1.0/),
 and this project adheres to Semantic Versioning. This is a pre-release
 (0.x) and APIs may change at any time.
 
+## [0.6.0-dev] - 2025-09-26
+
+### Added
+- Minimal PDF exporter: multi-page export with trim and bleed guides; panels/balloons as vector shapes; vector text via built-in Helvetica when possible.
+- PNG and SVG per-page exporters with DPI control and guide/bleed support.
+- CBZ packaging with metadata manifest.
+- Export presets (web, print) and batch export coordinator.
+- Made Exporters UI only
+- Optimized ergonomics of the UI
+- File menu: Close Project (Ctrl+W) closes the current project without closing the window; OS Quit/Beenden remains distinct (Ctrl+Q). Close Project is disabled when no project is open.
+
+
 ## [0.5.0-dev] - 2025-09-25
 
 ### Added
