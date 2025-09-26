@@ -150,7 +150,7 @@ bin/gocomicwriter-ui ./tmp_proj
 ```
 
 Notes and controls:
-- File → New/Open/Save (shortcuts: Ctrl+N/Ctrl+O/Ctrl+S; Exit: Ctrl+Q). Saves are transactional with timestamped backups.
+- File → New/Open/Save (shortcuts: Ctrl+N/Ctrl+O/Ctrl+S; Close Window: Ctrl+W; Quit: Ctrl+Q). Saves are transactional with timestamped backups.
 - Issue → Setup opens the Issue Setup dialog (trim size, bleed, DPI, reading direction). Changes apply to the current issue.
 - Export menu: Export Issue as PDF…, PNG pages…, SVG pages…, or CBZ…. You will be prompted for a file or folder; exports include trim/bleed guides and respect issue settings.
 - Panels (Inspector on the right): use Add Panel to create; select in the list to edit. Use Move Up/Down to change Z-order, Edit Metadata to change ID/notes, and the quick filter to find panels.

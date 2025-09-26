@@ -811,17 +811,17 @@ func Run(projectDir string) error {
 		l.Info("save completed", slog.String("manifest", ph.ManifestPath))
 		status.SetText("Saved project (manifest + script).")
 	})
-	exitItem := fyne.NewMenuItem("Exit", func() {
-		l.Info("menu: exit")
+	closeWinItem := fyne.NewMenuItem("Close Window", func() {
+		l.Info("menu: close window")
 		w.Close()
 	})
 	// Keyboard shortcuts
 	newItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyN, Modifier: fyne.KeyModifierControl}
 	openItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyO, Modifier: fyne.KeyModifierControl}
 	saveItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyS, Modifier: fyne.KeyModifierControl}
-	exitItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyQ, Modifier: fyne.KeyModifierControl}
+	closeWinItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyW, Modifier: fyne.KeyModifierControl}
 
-	fileMenu := fyne.NewMenu("File", newItem, openItem, saveItem, fyne.NewMenuItemSeparator(), exitItem)
+	fileMenu := fyne.NewMenu("File", newItem, openItem, saveItem, fyne.NewMenuItemSeparator(), closeWinItem)
 
 	// Issue menu with setup dialog
 	issueSetupItem := fyne.NewMenuItem("Issue Setup…", func() {
