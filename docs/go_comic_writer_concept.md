@@ -253,10 +253,10 @@ Alignment with Definition of Done:
 - [✓] Style sheets (global, per-issue, per-page).
 
 ### Phase 5 — Exporters
-- [ ] PDF export (with trim/bleed, vector text when possible).
-- [ ] PNG/SVG per page with DPI control.
-- [ ] CBZ packaging with metadata manifest.
-- [ ] Export presets (web, print) and batch export.
+- [✓] PDF export (with trim/bleed, vector text when possible).
+- [✓] PNG/SVG per page with DPI control.
+- [✓] CBZ packaging with metadata manifest.
+- [✓] Export presets (web, print) and batch export.
 
 ### Phase 5a — Data & Indexing (Embedded SQLite; see "Database and Indexing — Selected Approach")
 - [ ] Establish per-project index store at `project/.gcw/index.sqlite`; enable WAL; add `meta/version` tables.
