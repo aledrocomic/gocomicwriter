@@ -207,7 +207,7 @@ Resources:
           phases:
             install:
               runtime-versions:
-                golang: 1.23
+                golang: 1.24
             pre_build:
               commands:
                 - go version
