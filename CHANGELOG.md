@@ -6,6 +6,11 @@ The format is based on Keep a Changelog (https://keepachangelog.com/en/1.1.0/),
 and this project adheres to Semantic Versioning. This is a pre-release
 (0.x) and APIs may change at any time.
 
+## [0.7.0-dev] - 2025-yy-xx
+
+### Added
+- Updated version for the used gofpdf module to v1.16.2
+
 ## [0.6.0-dev] - 2025-09-26
 
 ### Added

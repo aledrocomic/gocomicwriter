@@ -4,13 +4,11 @@ go 1.24.0
 
 require (
 	fyne.io/fyne/v2 v2.6.3
-	github.com/jung-kurt/gofpdf v1.0.0
+	github.com/jung-kurt/gofpdf v1.16.2
 	github.com/xeipuuv/gojsonschema v1.2.0
 	golang.org/x/image v0.31.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
-
-replace github.com/jung-kurt/gofpdf => github.com/phpdave11/gofpdf v1.0.0
 
 require (
 	fyne.io/systray v1.11.0 // indirect
