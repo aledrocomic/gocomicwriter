@@ -259,12 +259,12 @@ Alignment with Definition of Done:
 - [✓] Export presets (web, print) and batch export.
 
 ### Phase 5a — Data & Indexing (Embedded SQLite; see "Database and Indexing — Selected Approach")
-- [ ] Establish per-project index store at `project/.gcw/index.sqlite`; enable WAL; add `meta/version` tables.
-- [ ] Define schema: `documents` (doc_id, type, path, page_id, character_id, text), `fts_documents` (FTS5, contentless with external content), `cross_refs` (from_id → to_id), `assets` (hash, path, type), `previews` (page_id/panel_id, thumb_blob, updated_at), `snapshots` (page_id, ts, delta_blob).
-- [ ] Implement background indexer: initial full build from `comic.json` and incremental updates on save; safe rebuild command ("Rebuild Index").
-- [ ] Add search service in-app: full-text with filters (character, scene, page range, tags) and "where-used" via `cross_refs`.
-- [ ] Wire UI: search panel/omnibox; navigate results to issue/page/panel; highlight hits.
-- [ ] Add caching pipeline: generate/stash thumbnails and geometry caches in `previews`; LRU eviction and max-size cap.
+- [✓] Establish per-project index store at `project/.gcw/index.sqlite`; enable WAL; add `meta/version` tables.
+- [✓] Define schema: `documents` (doc_id, type, path, page_id, character_id, text), `fts_documents` (FTS5, contentless with external content), `cross_refs` (from_id → to_id), `assets` (hash, path, type), `previews` (page_id/panel_id, thumb_blob, updated_at), `snapshots` (page_id, ts, delta_blob).
+- [✓] Implement background indexer: initial full build from `comic.json` and incremental updates on save; safe rebuild command ("Rebuild Index").
+- [✓] Add search service in-app: full-text with filters (character, scene, page range, tags) and "where-used" via `cross_refs`.
+- [✓] Wire UI: search panel/omnibox; navigate results to issue/page/panel; highlight hits.
+- [✓] Add caching pipeline: generate/stash thumbnails and geometry caches in `previews`; LRU eviction and max-size cap.
 - [ ] Migrations and tests: schema migration scripts, corruption/rebuild path, performance baselines; fixtures to validate FTS5 and cross-ref queries.
 - [ ] Docs and ops: clarify DB is derived/rebuildable; backup guidance; vacuum schedule.
 
