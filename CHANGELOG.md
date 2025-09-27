@@ -6,10 +6,23 @@ The format is based on Keep a Changelog (https://keepachangelog.com/en/1.1.0/),
 and this project adheres to Semantic Versioning. This is a pre-release
 (0.x) and APIs may change at any time.
 
-## [0.7.0-dev] - 2025-yy-xx
+## [0.7.0-dev] - 2025-09-27
 
 ### Added
 - Updated version for the used gofpdf module to v1.16.2
+- Set minimum Version for PostgreSQL
+- Updated Go version in aws-codepipeline.yml
+- Added a developer guide to project docs
+- Added an export option to .epub
+- Establish per-project index store at `project/.gcw/index.sqlite`; enable WAL; add `meta/version` tables.
+- Define schema: `documents` (doc_id, type, path, page_id, character_id, text), `fts_documents` (FTS5, contentless with external content), `cross_refs` (from_id → to_id), `assets` (hash, path, type), `previews` (page_id/panel_id, thumb_blob, updated_at), `snapshots` (page_id, ts, delta_blob).
+- Implement background indexer: initial full build from `comic.json` and incremental updates on save; safe rebuild command ("Rebuild Index").
+- Add search service in-app: full-text with filters (character, scene, page range, tags) and "where-used" via `cross_refs`.
+- Wire UI: search panel/omnibox; navigate results to issue/page/panel; highlight hits.
+- Add caching pipeline: generate/stash thumbnails and geometry caches in `previews`; LRU eviction and max-size cap.
+- Add schema migrations, corruption handling, index rebuild logic, and tests for SQLite-based project indexing. Document maintenance and recovery steps.
+- Vision for Version 2.x
+
 
 ## [0.6.0-dev] - 2025-09-26
 
