@@ -27,9 +27,9 @@ Clone and build (UI build):
 
 Run (UI):
 - Windows PowerShell
-  - go run -tags fyne ./cmd/gocomicwriter .\tmp_proj
+  - go run -tags fyne ./cmd/gocomicwriter
 - macOS/Linux
-  - GOFLAGS='' go run -tags fyne ./cmd/gocomicwriter ./tmp_proj
+  - GOFLAGS='' go run -tags fyne ./cmd/gocomicwriter
 
 Headless / no-UI stub:
 - go run ./cmd/gocomicwriter
@@ -58,7 +58,7 @@ Helpful environment variables (logging):
   - Project persistence layer (transactional save, backups, validation against schema).
   - Fall‑back open: if manifest is unreadable, auto‑selects latest valid backup.
 - internal/export
-  - Exporters for PDF, PNG, SVG, and CBZ.
+  - Exporters for PDF, PNG, SVG, CBZ, and EPUB.
 - internal/script
   - Lightweight script parser and types; beat extraction; outline & filters.
 - internal/textlayout
@@ -73,8 +73,6 @@ Helpful environment variables (logging):
   - Single source of truth for the application version string.
 - docs/
   - Concept/roadmap, JSON schema, CI/CD notes, and this guide.
-- tmp_proj/
-  - Sample project (comic.json) and backups to try the app quickly.
 
 
 ## Build matrix and tags
@@ -84,7 +82,7 @@ Helpful environment variables (logging):
 - Headless build (default): no `fyne` tag → compiles the stub app.
 - Example commands:
   - go build -tags fyne -o bin/gocomicwriter ./cmd/gocomicwriter
-  - go run -tags fyne ./cmd/gocomicwriter .\tmp_proj
+  - go run -tags fyne ./cmd/gocomicwriter
   - go build -o bin/gocomicwriter ./cmd/gocomicwriter   # stub build
 
 Windows CGO quick tips
@@ -207,7 +205,7 @@ CI/CD on AWS (optional)
 
 - Typical loop
   - Edit code in internal/*, run `go test ./...`.
-  - For UI: run `go run -tags fyne ./cmd/gocomicwriter ./tmp_proj` and iterate.
+  - For UI: run `go run -tags fyne ./cmd/gocomicwriter` and iterate.
   - Use GCW_LOG_LEVEL=debug for richer logs.
 - Troubleshooting UI startup
   - If you see OpenGL/GLFW errors, ensure you have a display and drivers.

@@ -70,7 +70,23 @@ func Run(projectDir string) error {
 	canvasWidget := NewPageCanvas()
 
 	// Canvas layout panes
-	left := container.NewVBox(widget.NewLabel("Pages"), widget.NewSeparator(), widget.NewLabel("(placeholder)"))
+	// Page navigation (left)
+	currentIssueIdx := 0
+	currentPageIdx := 0
+	pagesDisplay := []string{}
+	pageIdxMap := []int{}
+	pagesList := widget.NewList(
+		func() int { return len(pagesDisplay) },
+		func() fyne.CanvasObject { return widget.NewLabel("") },
+		func(i widget.ListItemID, o fyne.CanvasObject) {
+			if i >= 0 && int(i) < len(pagesDisplay) {
+				o.(*widget.Label).SetText(pagesDisplay[i])
+			} else {
+				o.(*widget.Label).SetText("")
+			}
+		},
+	)
+	left := container.NewVBox(widget.NewLabel("Pages"), widget.NewSeparator(), pagesList)
 	// Panel inspector (right)
 	panelDisplay := []string{}
 	panelIDs := []string{}
@@ -81,6 +97,7 @@ func Run(projectDir string) error {
 		func() fyne.CanvasObject { return widget.NewLabel("") },
 		func(i widget.ListItemID, o fyne.CanvasObject) { o.(*widget.Label).SetText(panelDisplay[i]) },
 	)
+	panelHeaderLabel := widget.NewLabel("Panels")
 	panelList.OnSelected = func(id widget.ListItemID) {
 		selectedPanel = int(id)
 		if selectedPanel >= 0 && selectedPanel < len(panelIDs) {
@@ -95,23 +112,91 @@ func Run(projectDir string) error {
 		canvasWidget.beatOverlay = v
 		l.Info("toggle beat overlay", slog.Bool("enabled", v))
 		// Re-render current page if available
-		if ph != nil && len(ph.Project.Issues) > 0 && len(ph.Project.Issues[0].Pages) > 0 {
-			canvasWidget.ShowPanels(ph.Project.Issues[0].Pages[0])
+		if ph != nil && len(ph.Project.Issues) > 0 {
+			iss := ph.Project.Issues[currentIssueIdx]
+			if currentPageIdx >= 0 && currentPageIdx < len(iss.Pages) {
+				canvasWidget.ShowPanels(iss.Pages[currentPageIdx])
+			}
 		}
 	})
 	// Restore overlay preference
 	savedOverlay := prefs.BoolWithFallback("overlay.beats", false)
 	canvasWidget.beatOverlay = savedOverlay
 	beatOverlayCheck.SetChecked(savedOverlay)
-	refreshPanelsUI := func() {
-		panelDisplay = panelDisplay[:0]
-		panelIDs = panelIDs[:0]
-		if ph == nil || len(ph.Project.Issues) == 0 || len(ph.Project.Issues[0].Pages) == 0 {
-			panelList.Refresh()
-			pacingLabel.SetText("")
+	// Build/update Pages list from model and respond to selection
+	refreshPagesList := func() {
+		pagesDisplay = pagesDisplay[:0]
+		pageIdxMap = pageIdxMap[:0]
+		if ph == nil || len(ph.Project.Issues) == 0 {
+			pagesList.Refresh()
 			return
 		}
-		pg := ph.Project.Issues[0].Pages[0]
+		iss := ph.Project.Issues[currentIssueIdx]
+		// sort by page number
+		type pair struct {
+			idx int
+			num int
+		}
+		pairs := make([]pair, 0, len(iss.Pages))
+		for i, pg := range iss.Pages {
+			pairs = append(pairs, pair{i, pg.Number})
+		}
+		sort.Slice(pairs, func(i, j int) bool { return pairs[i].num < pairs[j].num })
+		for _, p := range pairs {
+			pagesDisplay = append(pagesDisplay, fmt.Sprintf("Page %d", p.num))
+			pageIdxMap = append(pageIdxMap, p.idx)
+		}
+		pagesList.Refresh()
+		// select current page in view if possible
+		sel := -1
+		for i, pi := range pageIdxMap {
+			if pi == currentPageIdx {
+				sel = i
+				break
+			}
+		}
+		if sel >= 0 && sel < len(pageIdxMap) {
+			pagesList.Select(sel)
+		}
+	}
+	var refreshPanelsUI func()
+	pagesList.OnSelected = func(id widget.ListItemID) {
+		if ph == nil || len(ph.Project.Issues) == 0 {
+			return
+		}
+		iss := ph.Project.Issues[currentIssueIdx]
+		if id < 0 || int(id) >= len(pageIdxMap) {
+			return
+		}
+		idx := pageIdxMap[id]
+		if idx < 0 || idx >= len(iss.Pages) {
+			return
+		}
+		currentPageIdx = idx
+		selectedPanel = -1
+		canvasWidget.HighlightPanelID("")
+		refreshPanelsUI()
+	}
+	refreshPanelsUI = func() {
+		panelDisplay = panelDisplay[:0]
+		panelIDs = panelIDs[:0]
+		if ph == nil || len(ph.Project.Issues) == 0 {
+			panelList.Refresh()
+			pacingLabel.SetText("")
+			panelHeaderLabel.SetText("Panels")
+			return
+		}
+		iss := ph.Project.Issues[currentIssueIdx]
+		if len(iss.Pages) == 0 {
+			panelList.Refresh()
+			pacingLabel.SetText("")
+			panelHeaderLabel.SetText("Panels")
+			return
+		}
+		if currentPageIdx < 0 || currentPageIdx >= len(iss.Pages) {
+			currentPageIdx = 0
+		}
+		pg := iss.Pages[currentPageIdx]
 		// sort by zOrder
 		panels := append([]domain.Panel(nil), pg.Panels...)
 		sort.Slice(panels, func(i, j int) bool { return panels[i].ZOrder < panels[j].ZOrder })
@@ -127,12 +212,10 @@ func Run(projectDir string) error {
 			}
 		}
 		panelList.Refresh()
+		panelHeaderLabel.SetText(fmt.Sprintf("Panels (Page %d)", pg.Number))
 		// Update canvas rendering from model
-		if len(pg.Panels) > 0 {
-			canvasWidget.ShowPanels(pg)
-		}
+		canvasWidget.ShowPanels(pg)
 		// Update pacing info
-		iss := ph.Project.Issues[0]
 		turns := storage.ComputePageTurnIndicators(iss)
 		turnStr := ""
 		for _, ti := range turns {
@@ -159,7 +242,15 @@ func Run(projectDir string) error {
 		if ph == nil {
 			return
 		}
-		if _, err := storage.AddPanel(ph, 1, domain.Panel{}); err != nil {
+		iss := ph.Project.Issues[currentIssueIdx]
+		pageNum := 1
+		if currentPageIdx >= 0 && currentPageIdx < len(iss.Pages) {
+			pageNum = iss.Pages[currentPageIdx].Number
+		} else if len(iss.Pages) == 0 {
+			_, _ = storage.EnsurePage(ph, 1)
+			pageNum = 1
+		}
+		if _, err := storage.AddPanel(ph, pageNum, domain.Panel{}); err != nil {
 			dialog.ShowError(err, w)
 			return
 		}
@@ -175,7 +266,12 @@ func Run(projectDir string) error {
 			return
 		}
 		id := panelIDs[selectedPanel]
-		if err := storage.MovePanelZ(ph, 1, id, +1); err != nil {
+		iss := ph.Project.Issues[currentIssueIdx]
+		pageNum := 1
+		if currentPageIdx >= 0 && currentPageIdx < len(iss.Pages) {
+			pageNum = iss.Pages[currentPageIdx].Number
+		}
+		if err := storage.MovePanelZ(ph, pageNum, id, +1); err != nil {
 			dialog.ShowError(err, w)
 			return
 		}
@@ -190,7 +286,12 @@ func Run(projectDir string) error {
 			return
 		}
 		id := panelIDs[selectedPanel]
-		if err := storage.MovePanelZ(ph, 1, id, -1); err != nil {
+		iss := ph.Project.Issues[currentIssueIdx]
+		pageNum := 1
+		if currentPageIdx >= 0 && currentPageIdx < len(iss.Pages) {
+			pageNum = iss.Pages[currentPageIdx].Number
+		}
+		if err := storage.MovePanelZ(ph, pageNum, id, -1); err != nil {
 			dialog.ShowError(err, w)
 			return
 		}
@@ -206,7 +307,8 @@ func Run(projectDir string) error {
 		}
 		id := panelIDs[selectedPanel]
 		// fetch current values
-		pg := ph.Project.Issues[0].Pages[0]
+		iss := ph.Project.Issues[currentIssueIdx]
+		pg := iss.Pages[currentPageIdx]
 		var cur domain.Panel
 		for _, p := range pg.Panels {
 			if p.ID == id {
@@ -226,7 +328,8 @@ func Run(projectDir string) error {
 				return
 			}
 			newID := strings.TrimSpace(idEntry.Text)
-			if err := storage.UpdatePanelMeta(ph, 1, id, newID, notesEntry.Text); err != nil {
+			pageNum := pg.Number
+			if err := storage.UpdatePanelMeta(ph, pageNum, id, newID, notesEntry.Text); err != nil {
 				dialog.ShowError(err, w)
 				return
 			}
@@ -283,33 +386,21 @@ func Run(projectDir string) error {
 		iss := ph.Project.Issues[0]
 		for _, pg := range iss.Pages {
 			if page == 0 || pg.Number == page {
-				canvasWidget.ShowPanels(pg)
+				// update selection to this page and refresh UI
+				for i := range iss.Pages {
+					if iss.Pages[i].Number == pg.Number {
+						currentPageIdx = i
+						break
+					}
+				}
+				refreshPanelsUI()
+				// sync pages list selection
+				refreshPagesList()
+				// highlight panel if specified
 				if panel != "" {
 					canvasWidget.HighlightPanelID(panel)
 				} else {
 					canvasWidget.HighlightPanelID("")
-				}
-				// Update pacing label
-				turns := storage.ComputePageTurnIndicators(iss)
-				turnStr := ""
-				for _, ti := range turns {
-					if ti.PageNumber == pg.Number {
-						turnStr = fmt.Sprintf("Page %d — Turn:%v, Beats:%v, EndPanelBeats:%v", ti.PageNumber, ti.IsTurn, ti.HasBeats, ti.LastPanelHasBeats)
-						break
-					}
-				}
-				cov := storage.ComputeBeatCoverage(ph.Project)
-				total := 0
-				for _, c := range cov {
-					if c.PageNumber == pg.Number {
-						total = c.TotalBeats
-						break
-					}
-				}
-				if turnStr != "" {
-					pacingLabel.SetText(turnStr + fmt.Sprintf("; TotalBeats:%d", total))
-				} else {
-					pacingLabel.SetText(fmt.Sprintf("Page %d — TotalBeats:%d", pg.Number, total))
 				}
 				break
 			}
@@ -370,7 +461,7 @@ func Run(projectDir string) error {
 		widget.NewLabel("Search Results"), searchList, widget.NewSeparator(),
 		widget.NewLabel("Inspector"), widget.NewSeparator(),
 		pacingLabel, beatOverlayCheck, widget.NewSeparator(),
-		widget.NewLabel("Panels (Page 1)"), panelFilterEntry, panelList,
+		panelHeaderLabel, panelFilterEntry, panelList,
 		container.NewHBox(btnAddPanel, btnUp, btnDown, btnEdit),
 	))
 	canvasCenter := container.NewMax(canvasWidget)
@@ -913,6 +1004,11 @@ func Run(projectDir string) error {
 					refreshBible()
 					if len(ph.Project.Issues) > 0 {
 						canvasWidget.ApplyIssue(ph.Project.Issues[0])
+						// initialize pages list and select first page
+						currentIssueIdx = 0
+						currentPageIdx = 0
+						refreshPagesList()
+						refreshPanelsUI()
 					}
 					l.Info("project opened", slog.String("name", ph.Project.Name))
 					// Enable Close Project as a project is now open
@@ -1110,7 +1206,240 @@ func Run(projectDir string) error {
 		l.Info("menu: issue setup")
 		showIssueSetupDialog(w, ph, canvasWidget, status, l)
 	})
-	issueMenu := fyne.NewMenu("Issue", issueSetupItem)
+	// Minimal Add Page… command wraps storage.EnsurePage
+	addPageItem := fyne.NewMenuItem("Add Page…", func() {
+		if ph == nil {
+			l.Info("menu: add page (no project)")
+			dialog.ShowInformation("Add Page", "No project open.", w)
+			return
+		}
+		// Compute default next page number
+		next := 1
+		if len(ph.Project.Issues) > 0 {
+			iss := ph.Project.Issues[0]
+			for _, pg := range iss.Pages {
+				if pg.Number >= next {
+					next = pg.Number + 1
+				}
+			}
+		}
+		entry := widget.NewEntry()
+		entry.SetText(fmt.Sprintf("%d", next))
+		form := dialog.NewForm("Add Page", "Add", "Cancel", []*widget.FormItem{
+			widget.NewFormItem("Page Number", entry),
+		}, func(ok bool) {
+			if !ok {
+				return
+			}
+			n, err := strconv.Atoi(strings.TrimSpace(entry.Text))
+			if err != nil || n <= 0 {
+				dialog.ShowError(fmt.Errorf("Please enter a positive page number."), w)
+				return
+			}
+			if _, err := storage.EnsurePage(ph, n); err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			if err := storage.Save(ph); err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			status.SetText(fmt.Sprintf("Added page %d", n))
+			currentIssueIdx = 0
+			if len(ph.Project.Issues) > 0 {
+				iss := ph.Project.Issues[currentIssueIdx]
+				for i, pg := range iss.Pages {
+					if pg.Number == n {
+						currentPageIdx = i
+						break
+					}
+				}
+			}
+			refreshPagesList()
+			refreshPanelsUI()
+		}, w)
+		form.Show()
+	})
+	// Delete current page menu item
+	deletePageItem := fyne.NewMenuItem("Delete Current Page…", func() {
+		if ph == nil {
+			dialog.ShowInformation("Delete Page", "No project open.", w)
+			return
+		}
+		if len(ph.Project.Issues) == 0 || len(ph.Project.Issues[currentIssueIdx].Pages) == 0 {
+			dialog.ShowInformation("Delete Page", "No pages to delete.", w)
+			return
+		}
+		iss := &ph.Project.Issues[currentIssueIdx]
+		if currentPageIdx < 0 || currentPageIdx >= len(iss.Pages) {
+			dialog.ShowInformation("Delete Page", "Invalid current page.", w)
+			return
+		}
+		pg := iss.Pages[currentPageIdx]
+		confirm := dialog.NewConfirm("Delete Page", fmt.Sprintf("Delete Page %d? This cannot be undone.", pg.Number), func(ok bool) {
+			if !ok {
+				return
+			}
+			// Remove page from slice
+			iss.Pages = append(iss.Pages[:currentPageIdx], iss.Pages[currentPageIdx+1:]...)
+			// Renumber remaining pages so they start at 1 with no gaps
+			for i := range iss.Pages {
+				iss.Pages[i].Number = i + 1
+			}
+			// Adjust current page index
+			if currentPageIdx >= len(iss.Pages) {
+				currentPageIdx = len(iss.Pages) - 1
+			}
+			if currentPageIdx < 0 {
+				currentPageIdx = 0
+			}
+			if err := storage.Save(ph); err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			status.SetText(fmt.Sprintf("Deleted Page %d", pg.Number))
+			refreshPagesList()
+			refreshPanelsUI()
+		}, w)
+		confirm.SetDismissText("Cancel")
+		confirm.SetConfirmText("Delete")
+		confirm.Show()
+	})
+	issueMenu := fyne.NewMenu("Issue", issueSetupItem, addPageItem, deletePageItem)
+
+	// Insert menu (Balloon auto-placement)
+	insertBalloonItem := fyne.NewMenuItem("Balloon…", func() {
+		if ph == nil {
+			l.Info("menu: insert balloon (no project)")
+			dialog.ShowInformation("Insert Balloon", "No project open.", w)
+			return
+		}
+		if len(ph.Project.Issues) == 0 || len(ph.Project.Issues[0].Pages) == 0 {
+			dialog.ShowInformation("Insert Balloon", "No pages in the current project.", w)
+			return
+		}
+		iss := ph.Project.Issues[currentIssueIdx]
+		pg := &ph.Project.Issues[currentIssueIdx].Pages[currentPageIdx]
+		// Choose target panel: currently selected in the list, else first panel
+		var targetPanel *domain.Panel
+		if selectedPanel >= 0 && selectedPanel < len(panelIDs) {
+			pid := panelIDs[selectedPanel]
+			for i := range pg.Panels {
+				if pg.Panels[i].ID == pid {
+					targetPanel = &pg.Panels[i]
+					break
+				}
+			}
+		}
+		if targetPanel == nil {
+			if len(pg.Panels) == 0 {
+				dialog.ShowInformation("Insert Balloon", "No panels on this page.", w)
+				return
+			}
+			targetPanel = &pg.Panels[0]
+		}
+
+		// Default content box size for the dialog text (placeholder)
+		contentSz := vector.Size{W: 140, H: 80}
+		panelRect := vector.R(float32(targetPanel.Geometry.X), float32(targetPanel.Geometry.Y), float32(targetPanel.Geometry.Width), float32(targetPanel.Geometry.Height))
+		// Obstacles: existing balloons in this panel (approx by their rects)
+		var obstacles []vector.Rect
+		for _, b := range targetPanel.Balloons {
+			obstacles = append(obstacles, vector.R(float32(b.Shape.Rect.X), float32(b.Shape.Rect.Y), float32(b.Shape.Rect.Width), float32(b.Shape.Rect.Height)))
+		}
+		opts := vector.SuggestOptions{Padding: 8, Margin: 8, GridStep: 8, ReadingDirection: strings.ToLower(strings.TrimSpace(iss.ReadingDirection))}
+		if opts.ReadingDirection == "" {
+			opts.ReadingDirection = "ltr"
+		}
+		rect, _ := vector.SuggestBalloonLayout(panelRect, contentSz, obstacles, opts)
+
+		// Add a visual ellipse node to the canvas for immediate feedback
+		fill := vector.Fill{Enabled: true, Color: vector.Color{R: 255, G: 255, B: 255, A: 255}}
+		stroke := vector.Stroke{Enabled: true, Color: vector.Black, Width: 2}
+		ellipse := vector.NewEllipse(rect, fill, stroke)
+		canvasWidget.scene = append(canvasWidget.scene, ellipse)
+		canvasWidget.selected = len(canvasWidget.scene) - 1
+		canvasWidget.Refresh()
+
+		// Update the domain model (store ellipse balloon)
+		newID := fmt.Sprintf("balloon-%d", len(targetPanel.Balloons)+1)
+		bshape := domain.Shape{Kind: "ellipse", Rect: domain.Rect{X: float64(rect.X), Y: float64(rect.Y), Width: float64(rect.W), Height: float64(rect.H)}}
+		ball := domain.Balloon{ID: newID, Type: "speech", TextRuns: []domain.TextRun{{Content: "", Font: "", Size: 12}}, Shape: bshape}
+		targetPanel.Balloons = append(targetPanel.Balloons, ball)
+		status.SetText("Inserted balloon in panel " + targetPanel.ID)
+	})
+	// Vector insert items (make internal/vector shapes accessible via Insert menu)
+	insertRectItem := fyne.NewMenuItem("Rectangle", func() {
+		// Insert a default rectangle centered on the page
+		w0, h0 := float32(140), float32(90)
+		cx, cy := canvasWidget.pageW/2, canvasWidget.pageH/2
+		r := vector.R(cx-w0/2, cy-h0/2, w0, h0)
+		fill := vector.Fill{Enabled: true, Color: vector.Color{R: 255, G: 255, B: 255, A: 255}}
+		stroke := vector.Stroke{Enabled: true, Color: vector.Black, Width: 2}
+		n := vector.NewRect(r, fill, stroke)
+		canvasWidget.scene = append(canvasWidget.scene, n)
+		canvasWidget.selected = len(canvasWidget.scene) - 1
+		canvasWidget.Refresh()
+		status.SetText("Inserted rectangle")
+	})
+	insertEllipseItem := fyne.NewMenuItem("Ellipse", func() {
+		// Insert a default ellipse centered on the page
+		w0, h0 := float32(140), float32(100)
+		cx, cy := canvasWidget.pageW/2, canvasWidget.pageH/2
+		r := vector.R(cx-w0/2, cy-h0/2, w0, h0)
+		fill := vector.Fill{Enabled: true, Color: vector.Color{R: 255, G: 255, B: 255, A: 255}}
+		stroke := vector.Stroke{Enabled: true, Color: vector.Black, Width: 2}
+		n := vector.NewEllipse(r, fill, stroke)
+		canvasWidget.scene = append(canvasWidget.scene, n)
+		canvasWidget.selected = len(canvasWidget.scene) - 1
+		canvasWidget.Refresh()
+		status.SetText("Inserted ellipse")
+	})
+	insertRoundRectItem := fyne.NewMenuItem("Rounded Rectangle", func() {
+		w0, h0 := float32(180), float32(110)
+		radius := float32(12)
+		cx, cy := canvasWidget.pageW/2, canvasWidget.pageH/2
+		r := vector.R(cx-w0/2, cy-h0/2, w0, h0)
+		fill := vector.Fill{Enabled: true, Color: vector.Color{R: 255, G: 255, B: 255, A: 255}}
+		stroke := vector.Stroke{Enabled: true, Color: vector.Black, Width: 2}
+		n := vector.NewRoundedRect(r, radius, fill, stroke)
+		canvasWidget.scene = append(canvasWidget.scene, n)
+		canvasWidget.selected = len(canvasWidget.scene) - 1
+		canvasWidget.Refresh()
+		status.SetText("Inserted rounded rectangle")
+	})
+	insertPathItem := fyne.NewMenuItem("Path (Triangle)", func() {
+		// Create a simple triangle path near page center
+		cx, cy := canvasWidget.pageW/2, canvasWidget.pageH/2
+		s := float32(80)
+		var pth vector.Path
+		pth.MoveTo(cx, cy-s*0.6)
+		pth.LineTo(cx-s*0.6, cy+s*0.6)
+		pth.LineTo(cx+s*0.6, cy+s*0.6)
+		pth.Close()
+		fill := vector.Fill{Enabled: true, Color: vector.Color{R: 255, G: 255, B: 255, A: 255}}
+		stroke := vector.Stroke{Enabled: true, Color: vector.Black, Width: 2}
+		n := vector.NewPath(pth, fill, stroke)
+		canvasWidget.scene = append(canvasWidget.scene, n)
+		canvasWidget.selected = len(canvasWidget.scene) - 1
+		canvasWidget.Refresh()
+		status.SetText("Inserted path")
+	})
+	vectorSub := fyne.NewMenuItem("Vector", nil)
+	vectorSub.ChildMenu = fyne.NewMenu("Vector", insertRectItem, insertEllipseItem, insertRoundRectItem, insertPathItem)
+	// Delete selected object (vector node) from canvas
+	deleteSelectedItem := fyne.NewMenuItem("Delete Selected", func() {
+		if canvasWidget.selected < 0 || canvasWidget.selected >= len(canvasWidget.scene) {
+			dialog.ShowInformation("Delete Selected", "Nothing selected.", w)
+			return
+		}
+		idx := canvasWidget.selected
+		canvasWidget.scene = append(canvasWidget.scene[:idx], canvasWidget.scene[idx+1:]...)
+		canvasWidget.selected = -1
+		canvasWidget.Refresh()
+		status.SetText("Deleted selection")
+	})
+	insertMenu := fyne.NewMenu("Insert", insertBalloonItem, vectorSub, deleteSelectedItem)
 
 	// Export menu
 	exportPDFItem := fyne.NewMenuItem("Export Issue as PDF…", func() {
@@ -1283,7 +1612,7 @@ func Run(projectDir string) error {
 	})
 	aboutMenu := fyne.NewMenu("About", aboutItem, copyrightItem)
 
-	w.SetMainMenu(fyne.NewMainMenu(fileMenu, issueMenu, exportMenu, aboutMenu))
+	w.SetMainMenu(fyne.NewMainMenu(fileMenu, issueMenu, insertMenu, exportMenu, aboutMenu))
 
 	// Persist preferences on close
 	w.SetCloseIntercept(func() {
@@ -1306,6 +1635,9 @@ func Run(projectDir string) error {
 				refreshBible()
 				if len(ph.Project.Issues) > 0 {
 					canvasWidget.ApplyIssue(ph.Project.Issues[0])
+					currentIssueIdx = 0
+					currentPageIdx = 0
+					refreshPagesList()
 				}
 				refreshPanelsUI()
 			} else {

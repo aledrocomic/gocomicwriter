@@ -10,7 +10,7 @@ Empower writers and comic teams to go from script to lettered pages in one strea
 - Page-aware: page and panel planning that stays in sync with the script beats.
 - Precise lettering: pro typography, balloons, tails, and SFX with predictable export.
 - Asset organization: characters, locations, props, and visual references, all searchable and reusable.
-- Reliable exports: CBZ, PDF, PNG/SVG with consistent rendering, bleeds, and trim boxes.
+- Reliable exports: CBZ, PDF, PNG/SVG, EPUB with consistent rendering, bleeds, and trim boxes.
 - Fast search and cross-references: instant full-text search across script, captions, SFX, and Bible, with where-used lookups via cross-references.
 - Connected by design: offline-first with a local embedded index; thin backend for organization-wide search and future sync.
 - Offline-first and cross-platform: Windows, macOS, Linux.
@@ -25,7 +25,7 @@ Empower writers and comic teams to go from script to lettered pages in one strea
 - Plan issues: define page count, grid templates, panel breakdowns.
 - Auto-link script beats to panels; track coverage and page turns.
 - Letter pages: add balloons, tails, captions, SFX; adjust typography and styles.
-- Export to CBZ/PDF/PNG/SVG with per-page and whole-issue options.
+- Export to CBZ/PDF/PNG/SVG/EPUB with per-page and whole-issue options.
 - Reuse style packs and templates across projects.
 - Search across the project: global full-text with filters (character, scene, page range, tags) and fast "where-used" for characters/assets/scenes.
 - Connect to the thin backend: organization-wide search and project listing; lays groundwork for future sync.
@@ -60,7 +60,7 @@ Empower writers and comic teams to go from script to lettered pages in one strea
 - Templates (page grids, balloon presets, title pages, credits).
 
 5. Export
-- Single page and full issue export: PDF (with bleeds/trim), PNG/SVG per page, CBZ.
+- Single page and full issue export: PDF (with bleeds/trim), PNG/SVG per page, CBZ, and EPUB (fixed-layout).
 - Optional metadata embedding (title, issue, creators).
 - Export profiles (web, print, social).
 
@@ -95,7 +95,7 @@ Empower writers and comic teams to go from script to lettered pages in one strea
 - Storage: Local project directory with a human-readable manifest and organized assets.
 - Indexing: Embedded SQLite FTS5 per project at .gcw/index.sqlite with thumbnails/geometry caches; rebuildable and disposable.
 - Backend: Thin Go service with PostgreSQL for organization-wide search and future sync; offline-first integration; JSON manifest remains the source of truth.
-- Exporters: PDF, PNG/SVG, CBZ pipeline honoring trim/bleed, color profiles, and fonts.
+- Exporters: PDF, PNG/SVG, CBZ, EPUB pipeline honoring trim/bleed, color profiles, and fonts.
 - Extension points: Style packs, templates, and future scripting hooks.
 
 ### Project Structure (Conceptual)
