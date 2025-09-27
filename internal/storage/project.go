@@ -9,6 +9,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -70,6 +71,13 @@ func InitProject(root string, proj domain.Project) (*ProjectHandle, error) {
 		}
 	}
 
+	// Ensure per-project index store exists and is initialized.
+	if db, err := InitOrOpenIndex(root); err != nil {
+		l.Warn("index init failed (non-fatal)", slog.Any("err", err))
+	} else {
+		_ = db.Close()
+	}
+
 	ph := &ProjectHandle{
 		Root:         root,
 		ManifestPath: filepath.Join(root, ManifestFileName),
@@ -79,6 +87,14 @@ func InitProject(root string, proj domain.Project) (*ProjectHandle, error) {
 		l.Error("initial save failed", slog.Any("err", err))
 		return nil, err
 	}
+	// Build initial index in background
+	go func(p ProjectHandle) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := BuildIndexIfEmpty(ctx, p.Root, p.Project); err != nil {
+			l.Warn("initial index build failed", slog.Any("err", err))
+		}
+	}(*ph)
 	l.Info("project created", slog.String("manifest", ph.ManifestPath))
 	return ph, nil
 }
@@ -97,7 +113,18 @@ func Open(root string) (*ProjectHandle, error) {
 			return nil, fmt.Errorf("open manifest: %w; backup attempt: %v", err, berr)
 		}
 		l.Info("opened from backup", slog.String("manifest", mpath))
-		return &ProjectHandle{Root: root, ManifestPath: mpath, Project: *proj}, nil
+		ph := &ProjectHandle{Root: root, ManifestPath: mpath, Project: *proj}
+		// Ensure index exists and kick off build if empty
+		go func(p ProjectHandle) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if _, ierr := InitOrOpenIndex(p.Root); ierr != nil {
+				l.Warn("index init failed (non-fatal)", slog.Any("err", ierr))
+			} else if err := BuildIndexIfEmpty(ctx, p.Root, p.Project); err != nil {
+				l.Warn("index build failed", slog.Any("err", err))
+			}
+		}(*ph)
+		return ph, nil
 	}
 	var p domain.Project
 	if uerr := json.Unmarshal(b, &p); uerr != nil {
@@ -107,11 +134,39 @@ func Open(root string) (*ProjectHandle, error) {
 			l.Error("backup open failed", slog.Any("err", berr))
 			return nil, fmt.Errorf("parse manifest: %w; backup attempt: %v", uerr, berr)
 		}
+		// Initialize index even when opening from backup
+		if db, ierr := InitOrOpenIndex(root); ierr != nil {
+			l.Warn("index init failed (non-fatal)", slog.Any("err", ierr))
+		} else {
+			_ = db.Close()
+		}
 		l.Info("opened from backup", slog.String("manifest", mpath))
-		return &ProjectHandle{Root: root, ManifestPath: mpath, Project: *proj}, nil
+		ph := &ProjectHandle{Root: root, ManifestPath: mpath, Project: *proj}
+		go func(p ProjectHandle) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := BuildIndexIfEmpty(ctx, p.Root, p.Project); err != nil {
+				l.Warn("index build failed", slog.Any("err", err))
+			}
+		}(*ph)
+		return ph, nil
+	}
+	// Normal open path: ensure per-project index store is present
+	if db, ierr := InitOrOpenIndex(root); ierr != nil {
+		l.Warn("index init failed (non-fatal)", slog.Any("err", ierr))
+	} else {
+		_ = db.Close()
 	}
 	l.Info("project opened", slog.String("manifest", mpath), slog.String("name", p.Name))
-	return &ProjectHandle{Root: root, ManifestPath: mpath, Project: p}, nil
+	ph := &ProjectHandle{Root: root, ManifestPath: mpath, Project: p}
+	go func(p ProjectHandle) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := BuildIndexIfEmpty(ctx, p.Root, p.Project); err != nil {
+			l.Warn("index build failed", slog.Any("err", err))
+		}
+	}(*ph)
+	return ph, nil
 }
 
 // Save writes the current ProjectHandle.Project to disk with transactional semantics
@@ -170,6 +225,14 @@ func Save(ph *ProjectHandle) error {
 		return fmt.Errorf("replace manifest: %w", rerr)
 	}
 	l.Info("manifest saved", slog.String("path", ph.ManifestPath))
+	// Trigger background index update (incremental)
+	go func(p ProjectHandle) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := UpdateIndex(ctx, p.Root, p.Project); err != nil {
+			l.Warn("index update failed", slog.Any("err", err))
+		}
+	}(*ph)
 	return nil
 }
 

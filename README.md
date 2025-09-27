@@ -20,6 +20,7 @@ This repository currently provides a development skeleton: a desktop UI, an evol
 - Project manifest (comic.json) and schema
 - Repository layout
 - Tests
+- Developer Guide (for contributors): docs/developer-guide.md
 - Roadmap and concept
 - CI/CD and releases
 - Contributing and conduct
@@ -269,6 +270,27 @@ A minimal example comic.json:
 Note: The schema defines richer structures for pages, panels, balloons, styles, etc. For example, panels include fields like `id`, `zOrder`, `geometry {x,y,width,height}`, optional `notes`, and `linkedBeats` (array of beat IDs like `b:42`). See docs/comic.schema.json for all fields.
 
 A sample work‑in‑progress manifest lives at tmp_proj/comic.json (with automatic timestamped backups under tmp_proj/backups/).
+
+## Database, backups, and maintenance
+
+Embedded index (SQLite):
+- Per project, the app keeps an embedded SQLite database at `<project>\\.gcw\\index.sqlite` to power fast search (FTS5), cross‑references, and caches (thumbnails/geometry).
+- This database is derived from your manifest and assets. It is disposable and can be rebuilt at any time. Your source of truth remains `comic.json` and your asset files.
+
+Backups — what to include/exclude:
+- Include in backups: the entire project folder except `.gcw/` — at minimum `comic.json`, `script/`, `pages/`, `assets/`, `styles/`, `exports/`, and the `backups/` directory with timestamped manifest backups.
+- Exclude from backups (optional): `.gcw/` (contains `index.sqlite` and caches). If lost, the app will rebuild it automatically when you open the project.
+
+Rebuild the index (if needed):
+- Easiest: open the project; if `.gcw/index.sqlite` is missing or corrupt, the app detects it and performs a clean rebuild from `comic.json`.
+- Manual: close the app, delete `<project>\\.gcw\\index.sqlite`, then reopen the project. The index will be recreated. No project content is lost.
+
+Maintenance (SQLite VACUUM/optimize):
+- Defaults: WAL mode on; prefer `auto_vacuum=INCREMENTAL` under the hood; reasonable `wal_autocheckpoint`.
+- Recommended schedule (best effort, when idle):
+  - Weekly or when the DB grows beyond ~128 MiB: run `PRAGMA optimize;` and FTS optimize via `INSERT INTO fts_documents(fts_documents) VALUES('optimize');`, then `PRAGMA incremental_vacuum;` to reclaim free pages.
+  - After large deletions (many pages/assets removed): optionally run a full `VACUUM` or simply delete `index.sqlite` and let the app rebuild.
+- Note: These steps are informational; typical users don’t need to do anything. The app maintains the index and can always rebuild it.
 
 ## Repository layout
 Top‑level and key packages:

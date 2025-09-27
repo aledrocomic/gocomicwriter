@@ -11,6 +11,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"image/color"
 	"log/slog"
@@ -246,14 +247,140 @@ func Run(projectDir string) error {
 		refreshPanelsUI()
 	}
 
+	// Search state (omnibox + results panel)
+	searchItems := []string{}
+	var searchResults []storage.SearchResult
+	searchList := widget.NewList(
+		func() int { return len(searchItems) },
+		func() fyne.CanvasObject { return widget.NewLabel("") },
+		func(i widget.ListItemID, o fyne.CanvasObject) { o.(*widget.Label).SetText(searchItems[i]) },
+	)
+	// parse page/panel from index path
+	parsePagePanel := func(path string) (int, string) {
+		page := 0
+		panel := ""
+		parts := strings.Split(path, "/")
+		for _, p := range parts {
+			if strings.HasPrefix(p, "page:") {
+				if v, err := strconv.Atoi(strings.TrimPrefix(p, "page:")); err == nil {
+					page = v
+				}
+			} else if strings.HasPrefix(p, "panel:") {
+				panel = strings.TrimPrefix(p, "panel:")
+			}
+		}
+		return page, panel
+	}
+	// Navigation helper
+	navigateToResult := func(r storage.SearchResult) {
+		page, panel := parsePagePanel(r.Path)
+		if r.PageID > 0 && page == 0 {
+			page = r.PageID
+		}
+		if ph == nil || len(ph.Project.Issues) == 0 {
+			return
+		}
+		iss := ph.Project.Issues[0]
+		for _, pg := range iss.Pages {
+			if page == 0 || pg.Number == page {
+				canvasWidget.ShowPanels(pg)
+				if panel != "" {
+					canvasWidget.HighlightPanelID(panel)
+				} else {
+					canvasWidget.HighlightPanelID("")
+				}
+				// Update pacing label
+				turns := storage.ComputePageTurnIndicators(iss)
+				turnStr := ""
+				for _, ti := range turns {
+					if ti.PageNumber == pg.Number {
+						turnStr = fmt.Sprintf("Page %d — Turn:%v, Beats:%v, EndPanelBeats:%v", ti.PageNumber, ti.IsTurn, ti.HasBeats, ti.LastPanelHasBeats)
+						break
+					}
+				}
+				cov := storage.ComputeBeatCoverage(ph.Project)
+				total := 0
+				for _, c := range cov {
+					if c.PageNumber == pg.Number {
+						total = c.TotalBeats
+						break
+					}
+				}
+				if turnStr != "" {
+					pacingLabel.SetText(turnStr + fmt.Sprintf("; TotalBeats:%d", total))
+				} else {
+					pacingLabel.SetText(fmt.Sprintf("Page %d — TotalBeats:%d", pg.Number, total))
+				}
+				break
+			}
+		}
+	}
+	// Omnibox and search executor
+	omniBox := widget.NewEntry()
+	omniBox.SetPlaceHolder("Search project (Ctrl+K)…")
+	runSearch := func(q string) {
+		qq := strings.TrimSpace(q)
+		if qq == "" || ph == nil {
+			searchItems = searchItems[:0]
+			searchResults = searchResults[:0]
+			searchList.Refresh()
+			return
+		}
+		status.SetText("Searching…")
+		go func(h *storage.ProjectHandle, text string) {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			res, err := storage.Search(ctx, h.Root, storage.SearchQuery{Text: text, Limit: 200})
+			fyne.Do(func() {
+				if err != nil {
+					l.Error("search failed", slog.Any("err", err))
+					status.SetText("Search failed.")
+					return
+				}
+				searchResults = res
+				searchItems = searchItems[:0]
+				for _, r := range res {
+					page := "-"
+					if r.PageID > 0 {
+						page = fmt.Sprintf("%d", r.PageID)
+					}
+					sn := strings.TrimSpace(r.Snippet)
+					if sn == "" {
+						sn = r.Path
+					}
+					if len(sn) > 120 {
+						sn = sn[:120] + "…"
+					}
+					searchItems = append(searchItems, fmt.Sprintf("p.%s — %s — %s", page, r.Type, sn))
+				}
+				searchList.Refresh()
+				status.SetText(fmt.Sprintf("%d results", len(res)))
+			})
+		}(ph, qq)
+	}
+	omniBox.OnSubmitted = func(s string) { runSearch(s) }
+	searchList.OnSelected = func(id widget.ListItemID) {
+		if id < 0 || int(id) >= len(searchResults) {
+			return
+		}
+		navigateToResult(searchResults[id])
+	}
+
 	right := container.NewBorder(nil, nil, nil, nil, container.NewVBox(
+		widget.NewLabel("Search Results"), searchList, widget.NewSeparator(),
 		widget.NewLabel("Inspector"), widget.NewSeparator(),
 		pacingLabel, beatOverlayCheck, widget.NewSeparator(),
 		widget.NewLabel("Panels (Page 1)"), panelFilterEntry, panelList,
 		container.NewHBox(btnAddPanel, btnUp, btnDown, btnEdit),
 	))
 	canvasCenter := container.NewMax(canvasWidget)
-	canvasPane := container.NewBorder(nil, nil, left, right, canvasCenter)
+	topBar := container.NewBorder(nil, nil, nil, nil, container.NewHBox(omniBox))
+	canvasPane := container.NewBorder(topBar, nil, left, right, canvasCenter)
+
+	// Shortcut: focus omnibox with Ctrl+K
+	w.Canvas().AddShortcut(&desktop.CustomShortcut{KeyName: fyne.KeyK, Modifier: fyne.KeyModifierControl}, func(sc fyne.Shortcut) {
+		w.Canvas().Focus(omniBox)
+	})
 
 	// Script editor UI
 	scriptEntry := widget.NewMultiLineEntry()
@@ -849,7 +976,129 @@ func Run(projectDir string) error {
 	saveItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyS, Modifier: fyne.KeyModifierControl}
 	closeProjItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyW, Modifier: fyne.KeyModifierControl}
 
-	fileMenu := fyne.NewMenu("File", newItem, openItem, saveItem, fyne.NewMenuItemSeparator(), closeProjItem)
+	rebuildIndexItem := fyne.NewMenuItem("Rebuild Index", func() {
+		if ph == nil {
+			l.Info("menu: rebuild index (no project)")
+			dialog.ShowInformation("Rebuild Index", "No project open.", w)
+			return
+		}
+		l.Info("menu: rebuild index")
+		status.SetText("Rebuilding index…")
+		go func(h *storage.ProjectHandle) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			err := storage.RebuildIndex(ctx, h.Root, h.Project)
+			fyne.Do(func() {
+				if err != nil {
+					l.Error("rebuild index failed", slog.Any("err", err))
+					dialog.ShowError(err, w)
+					status.SetText("Rebuild failed.")
+				} else {
+					status.SetText("Index rebuilt.")
+					dialog.ShowInformation("Rebuild Index", "Index rebuilt successfully.", w)
+				}
+			})
+		}(ph)
+	})
+
+	searchItem := fyne.NewMenuItem("Search…", func() {
+		if ph == nil {
+			l.Info("menu: search (no project)")
+			dialog.ShowInformation("Search", "No project open.", w)
+			return
+		}
+		qEntry := widget.NewEntry()
+		qEntry.SetPlaceHolder("Search terms (FTS5; use quotes for phrases)")
+		fromEntry := widget.NewEntry()
+		fromEntry.SetPlaceHolder("From page #")
+		toEntry := widget.NewEntry()
+		toEntry.SetPlaceHolder("To page #")
+		form := dialog.NewForm("Search", "Run", "Cancel", []*widget.FormItem{
+			widget.NewFormItem("Query", qEntry),
+			widget.NewFormItem("Page From", fromEntry),
+			widget.NewFormItem("Page To", toEntry),
+		}, func(ok bool) {
+			if !ok {
+				return
+			}
+			var pfrom, pto int
+			if strings.TrimSpace(fromEntry.Text) != "" {
+				if v, err := strconv.Atoi(strings.TrimSpace(fromEntry.Text)); err == nil {
+					pfrom = v
+				}
+			}
+			if strings.TrimSpace(toEntry.Text) != "" {
+				if v, err := strconv.Atoi(strings.TrimSpace(toEntry.Text)); err == nil {
+					pto = v
+				}
+			}
+			status.SetText("Searching…")
+			go func(h *storage.ProjectHandle, sq storage.SearchQuery) {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				res, err := storage.Search(ctx, h.Root, sq)
+				fyne.Do(func() {
+					if err != nil {
+						l.Error("search failed", slog.Any("err", err))
+						dialog.ShowError(err, w)
+						status.SetText("Search failed.")
+						return
+					}
+					status.SetText(fmt.Sprintf("%d results", len(res)))
+					items := make([]string, len(res))
+					for i, r := range res {
+						page := "-"
+						if r.PageID > 0 {
+							page = fmt.Sprintf("%d", r.PageID)
+						}
+						sn := strings.TrimSpace(r.Snippet)
+						if sn == "" {
+							sn = r.Path
+						}
+						if len(sn) > 120 {
+							sn = sn[:120] + "…"
+						}
+						items[i] = fmt.Sprintf("p.%s — %s — %s", page, r.Type, sn)
+					}
+					list := widget.NewList(func() int { return len(items) }, func() fyne.CanvasObject { return widget.NewLabel("") }, func(i widget.ListItemID, o fyne.CanvasObject) { o.(*widget.Label).SetText(items[i]) })
+					// On select: navigate to page if available
+					list.OnSelected = func(id widget.ListItemID) {
+						if id < 0 || int(id) >= len(res) {
+							return
+						}
+						r := res[id]
+						// Try to extract a panel ID from the path for highlighting
+						panel := ""
+						for _, p := range strings.Split(r.Path, "/") {
+							if strings.HasPrefix(p, "panel:") {
+								panel = strings.TrimPrefix(p, "panel:")
+								break
+							}
+						}
+						if r.PageID > 0 && ph != nil && len(ph.Project.Issues) > 0 {
+							iss := ph.Project.Issues[0]
+							for _, pg := range iss.Pages {
+								if pg.Number == r.PageID {
+									canvasWidget.ShowPanels(pg)
+									if panel != "" {
+										canvasWidget.HighlightPanelID(panel)
+									}
+									break
+								}
+							}
+						}
+					}
+					d := dialog.NewCustom("Search Results", "Close", container.NewMax(list), w)
+					d.Resize(fyne.NewSize(700, 400))
+					d.Show()
+				})
+			}(ph, storage.SearchQuery{Text: strings.TrimSpace(qEntry.Text), PageFrom: pfrom, PageTo: pto})
+		}, w)
+		form.Resize(fyne.NewSize(600, 200))
+		form.Show()
+	})
+
+	fileMenu := fyne.NewMenu("File", newItem, openItem, saveItem, fyne.NewMenuItemSeparator(), searchItem, rebuildIndexItem, fyne.NewMenuItemSeparator(), closeProjItem)
 
 	// Issue menu with setup dialog
 	issueSetupItem := fyne.NewMenuItem("Issue Setup…", func() {
@@ -982,7 +1231,41 @@ func Run(projectDir string) error {
 		save.Show()
 	})
 
-	exportMenu := fyne.NewMenu("Export", exportPDFItem, exportPNGItem, exportSVGItem, exportCBZItem)
+	// EPUB export menu entry
+	exportEPUBItem := fyne.NewMenuItem("Export Issue as EPUB…", func() {
+		if ph == nil {
+			l.Info("menu: export epub (no project)")
+			dialog.ShowInformation("Export EPUB", "No project open.", w)
+			return
+		}
+		save := dialog.NewFileSave(func(uc fyne.URIWriteCloser, err error) {
+			if err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			if uc == nil {
+				return
+			}
+			outPath := uc.URI().Path()
+			_ = uc.Close()
+			// Run synchronously on the UI thread
+			err = export.ExportIssueEPUB(ph, 0, outPath, export.EPUBOptions{IncludeGuides: true, Language: "en", FixedLayout: true})
+			if err != nil {
+				dialog.ShowError(err, w)
+			} else {
+				dialog.ShowInformation("Export EPUB", "Exported to "+outPath, w)
+			}
+		}, w)
+		defName := "issue-1.epub"
+		if ph != nil && len(ph.Project.Issues) > 0 {
+			defName = fmt.Sprintf("issue-%d.epub", 1)
+		}
+		save.SetFileName(defName)
+		save.SetFilter(fstorage.NewExtensionFileFilter([]string{".epub"}))
+		save.Show()
+	})
+
+	exportMenu := fyne.NewMenu("Export", exportPDFItem, exportPNGItem, exportSVGItem, exportCBZItem, exportEPUBItem)
 
 	aboutItem := fyne.NewMenuItem("About Go Comic Writer", func() {
 		l.Info("menu: about")
@@ -1294,6 +1577,8 @@ type PageCanvas struct {
 
 	// Overlays
 	beatOverlay bool
+	// Mapping of scene nodes to panel IDs (parallel to scene)
+	panelIDs []string
 }
 
 // dragMode represents current interaction kind
@@ -1440,6 +1725,7 @@ func (p *PageCanvas) ApplyIssue(is domain.Issue) {
 func (p *PageCanvas) ShowPanels(pg domain.Page) {
 	// build nodes in z-order ascending so later items draw on top
 	s := make([]vector.Node, 0, len(pg.Panels))
+	ids := make([]string, 0, len(pg.Panels))
 	// Sort copy by zOrder
 	tmp := append([]domain.Panel(nil), pg.Panels...)
 	sort.Slice(tmp, func(i, j int) bool { return tmp[i].ZOrder < tmp[j].ZOrder })
@@ -1461,8 +1747,10 @@ func (p *PageCanvas) ShowPanels(pg domain.Page) {
 		}
 		n := vector.NewRect(rect, vector.Fill{Enabled: true, Color: fill}, vector.Stroke{Enabled: true, Color: vector.Color{R: 40, G: 40, B: 40, A: 255}, Width: 1})
 		s = append(s, n)
+		ids = append(ids, pn.ID)
 	}
 	p.scene = s
+	p.panelIDs = ids
 	p.selected = -1
 	p.Refresh()
 }
@@ -1646,6 +1934,24 @@ func (p *PageCanvas) Dragged(e *fyne.DragEvent) {
 	p.Refresh()
 }
 func (p *PageCanvas) DragEnd() { p.dragMode = dragNone }
+
+// HighlightPanelID selects the panel with the given ID (if present) and refreshes the canvas.
+func (p *PageCanvas) HighlightPanelID(panelID string) {
+	if strings.TrimSpace(panelID) == "" {
+		p.selected = -1
+		p.Refresh()
+		return
+	}
+	idx := -1
+	for i, id := range p.panelIDs {
+		if id == panelID {
+			idx = i
+			break
+		}
+	}
+	p.selected = idx
+	p.Refresh()
+}
 
 // Scroll changes zoom when Ctrl pressed, else pans vertically.
 func (p *PageCanvas) Scrolled(e *fyne.ScrollEvent) {

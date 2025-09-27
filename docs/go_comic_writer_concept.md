@@ -259,14 +259,14 @@ Alignment with Definition of Done:
 - [✓] Export presets (web, print) and batch export.
 
 ### Phase 5a — Data & Indexing (Embedded SQLite; see "Database and Indexing — Selected Approach")
-- [ ] Establish per-project index store at `project/.gcw/index.sqlite`; enable WAL; add `meta/version` tables.
-- [ ] Define schema: `documents` (doc_id, type, path, page_id, character_id, text), `fts_documents` (FTS5, contentless with external content), `cross_refs` (from_id → to_id), `assets` (hash, path, type), `previews` (page_id/panel_id, thumb_blob, updated_at), `snapshots` (page_id, ts, delta_blob).
-- [ ] Implement background indexer: initial full build from `comic.json` and incremental updates on save; safe rebuild command ("Rebuild Index").
-- [ ] Add search service in-app: full-text with filters (character, scene, page range, tags) and "where-used" via `cross_refs`.
-- [ ] Wire UI: search panel/omnibox; navigate results to issue/page/panel; highlight hits.
-- [ ] Add caching pipeline: generate/stash thumbnails and geometry caches in `previews`; LRU eviction and max-size cap.
-- [ ] Migrations and tests: schema migration scripts, corruption/rebuild path, performance baselines; fixtures to validate FTS5 and cross-ref queries.
-- [ ] Docs and ops: clarify DB is derived/rebuildable; backup guidance; vacuum schedule.
+- [✓] Establish per-project index store at `project/.gcw/index.sqlite`; enable WAL; add `meta/version` tables.
+- [✓] Define schema: `documents` (doc_id, type, path, page_id, character_id, text), `fts_documents` (FTS5, contentless with external content), `cross_refs` (from_id → to_id), `assets` (hash, path, type), `previews` (page_id/panel_id, thumb_blob, updated_at), `snapshots` (page_id, ts, delta_blob).
+- [✓] Implement background indexer: initial full build from `comic.json` and incremental updates on save; safe rebuild command ("Rebuild Index").
+- [✓] Add search service in-app: full-text with filters (character, scene, page range, tags) and "where-used" via `cross_refs`.
+- [✓] Wire UI: search panel/omnibox; navigate results to issue/page/panel; highlight hits.
+- [✓] Add caching pipeline: generate/stash thumbnails and geometry caches in `previews`; LRU eviction and max-size cap.
+- [✓] Migrations and tests: schema migration scripts, corruption/rebuild path, performance baselines; fixtures to validate FTS5 and cross-ref queries.
+- [✓] Docs and ops: clarify DB is derived/rebuildable; backup guidance; vacuum schedule.
 
 ### Phase 6 — Project UX & Assets
 - [ ] Project dashboard with recent files and templates.
@@ -279,8 +279,8 @@ Alignment with Definition of Done:
 - [ ] Change tracking in script editor.
 - [ ] Merge-friendly project format guidance and diff tips.
 
-### Phase 7a — Thin Backend (PostgreSQL; see "Database and Indexing — Selected Approach")
-- [ ] Define minimal backend service (Go) using PostgreSQL: schema for projects, `documents`, full-text via `tsvector`+GIN, `cross_refs`, assets metadata; migrations.
+### Phase 7a — Thin Backend (PostgreSQL Version 17+; see "Database and Indexing — Selected Approach")
+- [ ] Define minimal backend service (Go) using PostgreSQL Version 17+: schema for projects, `documents`, full-text via `tsvector`+GIN, `cross_refs`, assets metadata; migrations.
 - [ ] API endpoints: auth (token), list projects, pull index snapshot; later: push deltas and comments.
 - [ ] Desktop integration (behind feature flag): manual "Connect to Server"; read-only listing and search first; file-based `comic.json` remains the source of truth.
 - [ ] Sync prototype: op-log format and stable IDs; `created_at/updated_at/version` columns; basic push/pull over HTTPS (no conflict resolution yet).
@@ -381,9 +381,15 @@ Thin backend (Phase 7a)
 - Sync prototype: stable IDs and op‑log format with `created_at/updated_at/version` columns; basic push/pull over HTTPS.
 
 Operational considerations
-- Reliability: SQLite WAL, periodic VACUUM; DB is disposable and rebuildable from `comic.json`.
-- Backups: users back up the project folder; the embedded DB can be excluded—rebuild on demand.
-- Portability: projects open read‑only without the DB; app creates/rebuilds index as needed.
+- Reliability: SQLite WAL. The embedded index is disposable and can be rebuilt from `comic.json` and assets at any time.
+- Backups: back up the project folder (comic.json, script/, pages/, assets/, styles/, exports/, and backups/). You can exclude `.gcw/` — the index/caches are derived and rebuildable.
+- Portability: projects open even if `.gcw/index.sqlite` is missing; the app detects this and creates/rebuilds the index.
+- Maintenance (embedded SQLite):
+  - Defaults: WAL enabled; prefer `auto_vacuum=INCREMENTAL`; keep `wal_autocheckpoint` around ~1000 pages.
+  - Schedule: best effort maintenance on open/close when idle and either (a) last maintenance > 7 days, or (b) DB size > ~128 MiB.
+    - Run `PRAGMA optimize;` and `INSERT INTO fts_documents(fts_documents) VALUES('optimize');` to tune FTS.
+    - Run `PRAGMA incremental_vacuum;` to reclaim free pages without a full rewrite.
+  - After large deletions (e.g., removing many pages/assets), consider a one‑off full `VACUUM` or simply delete `.gcw/index.sqlite` and let the app rebuild.
 - Security: TLS for backend; no secrets stored in local DB; sanitize cached text used for FTS.
 
 Testing and parity
