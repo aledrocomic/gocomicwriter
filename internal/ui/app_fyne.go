@@ -1260,7 +1260,52 @@ func Run(projectDir string) error {
 		}, w)
 		form.Show()
 	})
-	issueMenu := fyne.NewMenu("Issue", issueSetupItem, addPageItem)
+	// Delete current page menu item
+	deletePageItem := fyne.NewMenuItem("Delete Current Page…", func() {
+		if ph == nil {
+			dialog.ShowInformation("Delete Page", "No project open.", w)
+			return
+		}
+		if len(ph.Project.Issues) == 0 || len(ph.Project.Issues[currentIssueIdx].Pages) == 0 {
+			dialog.ShowInformation("Delete Page", "No pages to delete.", w)
+			return
+		}
+		iss := &ph.Project.Issues[currentIssueIdx]
+		if currentPageIdx < 0 || currentPageIdx >= len(iss.Pages) {
+			dialog.ShowInformation("Delete Page", "Invalid current page.", w)
+			return
+		}
+		pg := iss.Pages[currentPageIdx]
+		confirm := dialog.NewConfirm("Delete Page", fmt.Sprintf("Delete Page %d? This cannot be undone.", pg.Number), func(ok bool) {
+			if !ok {
+				return
+			}
+			// Remove page from slice
+			iss.Pages = append(iss.Pages[:currentPageIdx], iss.Pages[currentPageIdx+1:]...)
+			// Renumber remaining pages so they start at 1 with no gaps
+			for i := range iss.Pages {
+				iss.Pages[i].Number = i + 1
+			}
+			// Adjust current page index
+			if currentPageIdx >= len(iss.Pages) {
+				currentPageIdx = len(iss.Pages) - 1
+			}
+			if currentPageIdx < 0 {
+				currentPageIdx = 0
+			}
+			if err := storage.Save(ph); err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			status.SetText(fmt.Sprintf("Deleted Page %d", pg.Number))
+			refreshPagesList()
+			refreshPanelsUI()
+		}, w)
+		confirm.SetDismissText("Cancel")
+		confirm.SetConfirmText("Delete")
+		confirm.Show()
+	})
+	issueMenu := fyne.NewMenu("Issue", issueSetupItem, addPageItem, deletePageItem)
 
 	// Insert menu (Balloon auto-placement)
 	insertBalloonItem := fyne.NewMenuItem("Balloon…", func() {
@@ -1382,7 +1427,19 @@ func Run(projectDir string) error {
 	})
 	vectorSub := fyne.NewMenuItem("Vector", nil)
 	vectorSub.ChildMenu = fyne.NewMenu("Vector", insertRectItem, insertEllipseItem, insertRoundRectItem, insertPathItem)
-	insertMenu := fyne.NewMenu("Insert", insertBalloonItem, vectorSub)
+	// Delete selected object (vector node) from canvas
+	deleteSelectedItem := fyne.NewMenuItem("Delete Selected", func() {
+		if canvasWidget.selected < 0 || canvasWidget.selected >= len(canvasWidget.scene) {
+			dialog.ShowInformation("Delete Selected", "Nothing selected.", w)
+			return
+		}
+		idx := canvasWidget.selected
+		canvasWidget.scene = append(canvasWidget.scene[:idx], canvasWidget.scene[idx+1:]...)
+		canvasWidget.selected = -1
+		canvasWidget.Refresh()
+		status.SetText("Deleted selection")
+	})
+	insertMenu := fyne.NewMenu("Insert", insertBalloonItem, vectorSub, deleteSelectedItem)
 
 	// Export menu
 	exportPDFItem := fyne.NewMenuItem("Export Issue as PDF…", func() {
