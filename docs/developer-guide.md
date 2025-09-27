@@ -4,7 +4,7 @@ Audience: contributors, integrators, and maintainers working on the Go Comic Wri
 
 This guide complements the README (user‑oriented quick start) and the product concept/roadmap in docs/go_comic_writer_concept.md. It focuses on developer setup, architecture, coding/testing conventions, build tags, CI/CD, and release flow.
 
-- Project home: https://github.com/<your-org-or-user>/gocomicwriter
+- Project home: https://github.com/aledrocomic/gocomicwriter
 - License: Apache 2.0 (see LICENSE)
 - Code of Conduct: CODE_OF_CONDUCT.md
 
