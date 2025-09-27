@@ -34,7 +34,7 @@ Go Comic Writer is an in‑progress toolchain for comic writing and lettering. I
 - Deterministic in rendering and export
 - Cross‑platform and offline‑first
 
-The long‑term plan is a desktop application with a canvas editor and exporters (PDF/PNG/SVG/CBZ). See the concept document for details.
+The long‑term plan is a desktop application with a canvas editor and exporters (PDF/PNG/SVG/CBZ/EPUB). See the concept document for details.
 
 ## Tech stack and entry points
 - Language: Go 1.24 (module-based; see go.mod)
@@ -66,9 +66,9 @@ Entry points:
 - Panels: add from the Inspector (Add Panel), reorder Z with Move Up/Down, and edit metadata (ID, notes). A quick filter above the panel list helps find panels by ID/notes/text.
 - Script integration (experimental): structured editor with outline and beat tagging; beats can be linked to panels; unmapped beat warnings in outline.
 - Beat coverage overlay and page‑turn pacing indicators (experimental) in the canvas to aid layout/planning.
-- Exporters (UI): Export menu for PDF (multi-page), PNG pages, SVG pages, and CBZ package. Exports include trim/bleed guides and respect issue settings.
+- Exporters (UI): Export menu for PDF (multi-page), PNG pages, SVG pages, CBZ package, and EPUB (fixed-layout). Exports include trim/bleed guides and respect issue settings.
+- Search panel/omnibox: instant full-text search with filters (character, scene, page range, tags); navigate to results (issue/page/panel) and highlight hits.
 - About menu with environment info (Go version, OS/arch, cgo/fyne status) and a Copyright dialog.
-- Sample project manifest at tmp_proj/comic.json (with backups under tmp_proj/backups/).
 - Unit tests for core packages (storage, logging, crash, version, schema).
 
 ### Implemented in Phase 1 — Core rendering & geometry
@@ -106,11 +106,11 @@ go run -tags fyne ./cmd/gocomicwriter
 # macOS/Linux
 GOFLAGS='' go run -tags fyne ./cmd/gocomicwriter
 
-# Optionally, open the sample project on startup
+# Optionally, open a specific project on startup by passing its path
 # Windows PowerShell
-go run -tags fyne ./cmd/gocomicwriter .\tmp_proj
+go run -tags fyne ./cmd/gocomicwriter C:\\path\\to\\your\\project
 # macOS/Linux
-GOFLAGS='' go run -tags fyne ./cmd/gocomicwriter ./tmp_proj
+GOFLAGS='' go run -tags fyne ./cmd/gocomicwriter /path/to/your/project
 ```
 
 ## Usage
@@ -126,12 +126,12 @@ Build and run directly (no binary):
 go run -tags fyne ./cmd/gocomicwriter
 # Use File → New to create a project, or File → Open to open an existing one.
 
-# Alternatively, open the sample project directly
+# Alternatively, open a specific project directly by passing its path
 # Windows PowerShell
-go run -tags fyne ./cmd/gocomicwriter .\tmp_proj
+go run -tags fyne ./cmd/gocomicwriter C:\\path\\to\\your\\project
 
 # On macOS/Linux
-GOFLAGS='' go run -tags fyne ./cmd/gocomicwriter ./tmp_proj
+GOFLAGS='' go run -tags fyne ./cmd/gocomicwriter /path/to/your/project
 ```
 
 Or build a binary with UI support:
@@ -147,13 +147,15 @@ go build -tags fyne -o bin/gocomicwriter-ui ./cmd/gocomicwriter
 Then run:
 
 ```bash
-bin/gocomicwriter-ui ./tmp_proj
+bin/gocomicwriter-ui C:\\path\\to\\your\\project  # on Windows
+# or on macOS/Linux
+./bin/gocomicwriter-ui /path/to/your/project
 ```
 
 Notes and controls:
 - File → New/Open/Save (shortcuts: Ctrl+N/Ctrl+O/Ctrl+S; Close Project: Ctrl+W; Quit: Ctrl+Q). Saves are transactional with timestamped backups.
 - Issue → Setup opens the Issue Setup dialog (trim size, bleed, DPI, reading direction). Changes apply to the current issue.
-- Export menu: Export Issue as PDF…, PNG pages…, SVG pages…, or CBZ…. You will be prompted for a file or folder; exports include trim/bleed guides and respect issue settings.
+- Export menu: Export Issue as PDF…, PNG pages…, SVG pages…, CBZ…, or EPUB…. You will be prompted for a file or folder; exports include trim/bleed guides and respect issue settings.
 - Panels (Inspector on the right): use Add Panel to create; select in the list to edit. Use Move Up/Down to change Z-order, Edit Metadata to change ID/notes, and the quick filter to find panels.
 - Script integration: see the Script tab. Beats can be linked to panels; unmapped beats are highlighted in the outline.
 - Overlays and pacing: toggle Beat Coverage Overlay in the Inspector; pacing info for the current page is shown above the panel list.
@@ -198,7 +200,7 @@ Troubleshooting:
   - On Windows, install a C toolchain (MSYS2/MinGW-w64) so gcc is available, then enable cgo:
     - Start an MSYS2 MinGW64 shell or ensure `gcc` is on PATH in PowerShell.
     - PowerShell: `setx CGO_ENABLED 1` (or for the current session: `$env:CGO_ENABLED='1'`)
-    - Then: `go run -tags fyne ./cmd/gocomicwriter .\tmp_proj`
+    - Then: `go run -tags fyne ./cmd/gocomicwriter`
   - On macOS: Xcode Command Line Tools are usually sufficient. Ensure `CGO_ENABLED=1`.
   - On Linux: install build-essential (Debian/Ubuntu) or base-devel (Arch), ensure `CGO_ENABLED=1`.
 - If cgo is still disabled, the binary will fall back to a helpful stub error when running the app built with `-tags fyne`. 
@@ -210,8 +212,8 @@ Notes:
 These shell snippets act as “scripts” you can copy-paste. Adjust paths for your OS.
 - Build UI binary (Windows): `go build -tags fyne -o bin\\gocomicwriter.exe ./cmd/gocomicwriter`
 - Build UI binary (macOS/Linux): `go build -tags fyne -o bin/gocomicwriter ./cmd/gocomicwriter`
-- Run UI from source (Windows): `go run -tags fyne ./cmd/gocomicwriter .\\tmp_proj`
-- Run UI from source (macOS/Linux): `go run -tags fyne ./cmd/gocomicwriter ./tmp_proj`
+- Run UI from source (Windows): `go run -tags fyne ./cmd/gocomicwriter`
+- Run UI from source (macOS/Linux): `go run -tags fyne ./cmd/gocomicwriter`
 - Exports: use the app's Export menu (CLI export commands have been removed).
 - Format code: `gofmt -s -w .`
 - Vet: `go vet ./...`
@@ -224,8 +226,8 @@ The app uses structured logging (slog). Configure via environment variables:
 - GCW_LOG_FILE=<path> (optional; enables rotating JSON file logs)
 
 Examples:
-- PowerShell: `$env:GCW_LOG_LEVEL='debug'; go run -tags fyne ./cmd/gocomicwriter .\tmp_proj`
-- Bash: `GCW_LOG_FORMAT=json GCW_LOG_FILE=gcw.log go run -tags fyne ./cmd/gocomicwriter ./tmp_proj`
+- PowerShell: `$env:GCW_LOG_LEVEL='debug'; go run -tags fyne ./cmd/gocomicwriter`
+- Bash: `GCW_LOG_FORMAT=json GCW_LOG_FILE=gcw.log go run -tags fyne ./cmd/gocomicwriter`
 
 ## Crash reports and autosave
 On an unexpected crash (panic), the app will:
@@ -269,7 +271,7 @@ A minimal example comic.json:
 
 Note: The schema defines richer structures for pages, panels, balloons, styles, etc. For example, panels include fields like `id`, `zOrder`, `geometry {x,y,width,height}`, optional `notes`, and `linkedBeats` (array of beat IDs like `b:42`). See docs/comic.schema.json for all fields.
 
-A sample work‑in‑progress manifest lives at tmp_proj/comic.json (with automatic timestamped backups under tmp_proj/backups/).
+No sample project is bundled. Create a new one via File → New in the app, or open an existing project directory.
 
 ## Database, backups, and maintenance
 
@@ -310,7 +312,6 @@ Top‑level and key packages:
 - docs/ — concept and schema:
   - go_comic_writer_concept.md — product concept, pillars, architecture, milestones.
   - comic.schema.json — JSON schema for comic.json projects.
-- tmp_proj/ — sample project used in README examples; contains comic.json and backups/.
 - bin/ — local build output (e.g., gocomicwriter, gocomicwriter-ui); not published.
 - Root files:
   - README.md, CHANGELOG.md, LICENSE, CODE_OF_CONDUCT.md, go.mod, go.sum.
@@ -328,7 +329,7 @@ Highlights:
 - Script editor with beat tagging and character/location bible
 - Page & panel planner with grids and coverage tracking
 - Lettering tools (balloons, tails, SFX) with pro typography
-- Deterministic exporters: PDF, PNG/SVG, CBZ
+- Deterministic exporters: PDF, PNG/SVG, CBZ, EPUB
 
 ## CI/CD and releases
 
@@ -336,7 +337,7 @@ AWS CI/CD (CodePipeline):
 - A ready-to-deploy AWS pipeline is provided as a CloudFormation template at docs/aws-codepipeline.yml. It creates:
   - A versioned, encrypted S3 bucket for pipeline artifacts (retained on stack deletion)
   - Least-privilege IAM roles for CodePipeline and CodeBuild
-  - A CodeBuild project (Go 1.23; vet + formatting check; builds linux/amd64 and windows/amd64; optional S3 publish)
+  - A CodeBuild project (Go 1.24; vet + formatting check; builds linux/amd64 and windows/amd64; optional S3 publish)
   - A CodePipeline with two stages: Source (GitHub via CodeStar Connections) and Build (CodeBuild)
 - Full setup and operations guide: docs/ci-cd-aws.md
 
@@ -362,7 +363,7 @@ Notes:
 - You must have a CodeStar Connection to GitHub in eu-west-1 and pass its ARN as GitHubConnectionArn.
 - To publish artifacts to S3, create a bucket and pass its name as ReleaseBucketName; otherwise S3 upload is skipped.
 - If your build entry point differs from the template defaults, see “Adjusting build paths/names” in docs/ci-cd-aws.md.
-- Toolchain version: the template’s CodeBuild buildspec uses Go 1.23; this repository targets Go 1.24 (see go.mod). Update the template if you want them aligned.
+- Toolchain version: the template’s CodeBuild buildspec uses Go 1.24, aligned with this repository (see go.mod).
 
 GitHub Actions (TODO):
 - No GitHub Actions workflows are currently included in this repository. For an example release workflow and setup instructions, see docs/ci-cd-aws.md (section "GitHub Actions-based releases"). If you add workflows later, update this README accordingly.
