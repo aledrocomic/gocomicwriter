@@ -119,6 +119,17 @@ Beat and script integration (experimental)
 - Panels link beats via `linkedBeats` in the manifest.
 
 
+## Storage & Indexing (embedded SQLite) — ops notes
+
+- Location: per-project embedded index at `<project>\\.gcw\\index.sqlite` providing full‑text search (FTS5), cross‑references, thumbnails, and geometry caches.
+- Derived/rebuildable: the index is derived from `comic.json` and assets. It is safe to delete; the app recreates/rebuilds it on open. The JSON manifest remains canonical.
+- SQLite settings: WAL mode enabled; FTS5 contentless index kept in sync via triggers; prefer `auto_vacuum=INCREMENTAL`; keep `wal_autocheckpoint` around ~1000 pages.
+- Backups: include the project folder (`comic.json`, `script/`, `pages/`, `assets/`, `styles/`, `exports/`, and `backups/`). You may exclude `.gcw/` entirely — it contains only derived state.
+- Maintenance schedule (recommendation):
+  - Weekly or when DB > ~128 MiB: run `PRAGMA optimize;` and FTS optimize via `INSERT INTO fts_documents(fts_documents) VALUES('optimize');`, then `PRAGMA incremental_vacuum;`.
+  - After large deletions: optionally run a full `VACUUM` or delete `index.sqlite` to force a clean rebuild.
+- Recovery path: if corruption is detected, back up `index.sqlite` (optional), remove it, and launch the app or call the storage `RebuildIndex` helper to repopulate from `comic.json`.
+
 ## Logging and crash handling
 
 - Logging is centrally configured by internal/log with slog.

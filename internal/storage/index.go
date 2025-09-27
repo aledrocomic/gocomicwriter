@@ -34,7 +34,7 @@ const (
 
 	// schemaVersion tracks the local SQLite schema for the embedded index.
 	// Bump this when you perform breaking schema changes and add migrations.
-	schemaVersion = 1
+	schemaVersion = 2
 )
 
 // IndexPath returns the full path to the project's embedded index database file.
@@ -81,7 +81,9 @@ func InitOrOpenIndex(projectRoot string) (*sql.DB, error) {
 		return nil, fmt.Errorf("enable WAL: %w", err)
 	}
 	// Enforce foreign keys just in case future schema uses them.
-	_, _ = db.ExecContext(ctx, "PRAGMA foreign_keys=ON;")
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys=ON;"); err != nil {
+		l.Warn("enable foreign_keys failed", slog.Any("err", err))
+	}
 
 	if err := ensureMetaAndVersion(ctx, db); err != nil {
 		_ = db.Close()
@@ -92,6 +94,12 @@ func InitOrOpenIndex(projectRoot string) (*sql.DB, error) {
 	if err := ensureIndexSchema(ctx, db); err != nil {
 		_ = db.Close()
 		l.Error("ensure index schema failed", slog.Any("err", err))
+		return nil, err
+	}
+	// Run migrations to bring DB schema up to date
+	if err := runMigrations(ctx, db); err != nil {
+		_ = db.Close()
+		l.Error("run migrations failed", slog.Any("err", err))
 		return nil, err
 	}
 
@@ -122,15 +130,70 @@ func ensureMetaAndVersion(ctx context.Context, db *sql.DB) error {
 	// Seed or update single-row version info
 	now := time.Now().UTC().Format(time.RFC3339)
 	appv := version.String()
-	// Upsert row with id=1
-	_, err := db.ExecContext(ctx, `INSERT INTO version (id, schema, app, created_at, updated_at)
-		VALUES (1, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			schema=excluded.schema,
-			app=excluded.app,
-			updated_at=excluded.updated_at`, schemaVersion, appv, now, now)
-	if err != nil {
-		return fmt.Errorf("seed version: %w", err)
+	// Check if a version row exists
+	var curSchema int
+	err := db.QueryRowContext(ctx, `SELECT schema FROM version WHERE id=1`).Scan(&curSchema)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// Insert new row with current schemaVersion for a fresh DB
+		if _, err := db.ExecContext(ctx, `INSERT INTO version (id, schema, app, created_at, updated_at) VALUES(1, ?, ?, ?, ?)`, schemaVersion, appv, now, now); err != nil {
+			return fmt.Errorf("insert version: %w", err)
+		}
+	case err != nil:
+		return fmt.Errorf("read version: %w", err)
+	default:
+		// Update app and timestamp only; keep existing schema for migrations
+		if _, err := db.ExecContext(ctx, `UPDATE version SET app=?, updated_at=? WHERE id=1`, appv, now); err != nil {
+			return fmt.Errorf("update version: %w", err)
+		}
+	}
+	return nil
+}
+
+// runMigrations applies incremental schema migrations up to schemaVersion.
+func runMigrations(ctx context.Context, db *sql.DB) error {
+	var cur int
+	if err := db.QueryRowContext(ctx, `SELECT schema FROM version WHERE id=1`).Scan(&cur); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	if cur > schemaVersion {
+		// Do not downgrade; just log and continue
+		return nil
+	}
+	for cur < schemaVersion {
+		next := cur + 1
+		switch next {
+		case 2:
+			// Add helpful indexes for cross-refs and optimize FTS
+			tx, err := db.BeginTx(ctx, nil)
+			if err != nil {
+				return fmt.Errorf("begin migration %d: %w", next, err)
+			}
+			stmts := []string{
+				`CREATE INDEX IF NOT EXISTS idx_cross_refs_to ON cross_refs(to_id);`,
+				`CREATE INDEX IF NOT EXISTS idx_cross_refs_from ON cross_refs(from_id);`,
+			}
+			for _, q := range stmts {
+				if _, err := tx.ExecContext(ctx, q); err != nil {
+					_ = tx.Rollback()
+					return fmt.Errorf("migration %d stmt failed: %w", next, err)
+				}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE version SET schema=?, updated_at=? WHERE id=1`, next, time.Now().UTC().Format(time.RFC3339)); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("migration %d update version: %w", next, err)
+			}
+			if err := tx.Commit(); err != nil {
+				return fmt.Errorf("migration %d commit: %w", next, err)
+			}
+			// Best-effort FTS optimize (outside the tx)
+			if _, err := db.ExecContext(ctx, `INSERT INTO fts_documents(fts_documents) VALUES('optimize')`); err != nil {
+				// best-effort optimize; ignore errors
+			}
+		default:
+			// Unknown future step; break
+		}
+		cur = next
 	}
 	return nil
 }
@@ -222,6 +285,57 @@ func ensureIndexSchema(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	return nil
+}
+
+// DetectAndRebuildIndex checks for corruption or missing schema and rebuilds the index if needed.
+// It returns true when a rebuild was performed.
+func DetectAndRebuildIndex(ctx context.Context, projectRoot string, proj domain.Project) (bool, error) {
+	path := IndexPath(projectRoot)
+	// Try to open DB; if fails, attempt backup+delete+rebuild
+	db, err := InitOrOpenIndex(projectRoot)
+	if err != nil {
+		backupIndexFile(path)
+		_ = os.Remove(path)
+		if rbErr := RebuildIndex(ctx, projectRoot, proj); rbErr != nil {
+			return false, fmt.Errorf("rebuild after open failure: %w (open err: %v)", rbErr, err)
+		}
+		return true, nil
+	}
+	defer db.Close()
+	needs := false
+	// quick_check for corruption
+	var chk string
+	if err := db.QueryRowContext(ctx, `PRAGMA quick_check;`).Scan(&chk); err != nil || !strings.Contains(strings.ToLower(chk), "ok") {
+		needs = true
+	}
+	// Probe core table
+	if !needs {
+		if _, err := db.ExecContext(ctx, `SELECT 1 FROM documents LIMIT 1;`); err != nil {
+			needs = true
+		}
+	}
+	if !needs {
+		return false, nil
+	}
+	// Backup and remove existing DB file
+	backupIndexFile(path)
+	_ = os.Remove(path)
+	// Rebuild
+	if err := RebuildIndex(ctx, projectRoot, proj); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// backupIndexFile copies the current index file into a timestamped backup in .gcw/backups.
+func backupIndexFile(indexPath string) {
+	bdir := filepath.Join(filepath.Dir(indexPath), "backups")
+	_ = os.MkdirAll(bdir, 0o755)
+	stamp := time.Now().Format("20060102-150405")
+	bak := filepath.Join(bdir, fmt.Sprintf("%s.%s.bak", filepath.Base(indexPath), stamp))
+	if data, err := os.ReadFile(indexPath); err == nil {
+		_ = os.WriteFile(bak, data, 0o644)
+	}
 }
 
 // stringsTrim is a tiny helper to avoid importing strings here just for TrimSpace.

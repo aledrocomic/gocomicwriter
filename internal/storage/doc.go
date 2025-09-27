@@ -6,7 +6,8 @@
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the License for the specific language governing permissions and limitations under the License.
  */
 
-// Package storage will implement file I/O for project manifests and assets.
-// It will handle create/open/save operations with transactional writes and backups.
-// This is a placeholder to establish workspace layout per the concept document.
+// Package storage implements project persistence and indexing.
+// It handles create/open/save for the canonical JSON manifest (comic.json) with transactional writes and timestamped backups.
+// It also manages the per‑project embedded SQLite index at <project>/.gcw/index.sqlite used for search and caches.
+// The embedded index is derived from comic.json and assets and is rebuildable/disposable by design.
 package storage

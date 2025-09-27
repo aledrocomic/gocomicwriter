@@ -265,8 +265,8 @@ Alignment with Definition of Done:
 - [✓] Add search service in-app: full-text with filters (character, scene, page range, tags) and "where-used" via `cross_refs`.
 - [✓] Wire UI: search panel/omnibox; navigate results to issue/page/panel; highlight hits.
 - [✓] Add caching pipeline: generate/stash thumbnails and geometry caches in `previews`; LRU eviction and max-size cap.
-- [ ] Migrations and tests: schema migration scripts, corruption/rebuild path, performance baselines; fixtures to validate FTS5 and cross-ref queries.
-- [ ] Docs and ops: clarify DB is derived/rebuildable; backup guidance; vacuum schedule.
+- [✓] Migrations and tests: schema migration scripts, corruption/rebuild path, performance baselines; fixtures to validate FTS5 and cross-ref queries.
+- [✓] Docs and ops: clarify DB is derived/rebuildable; backup guidance; vacuum schedule.
 
 ### Phase 6 — Project UX & Assets
 - [ ] Project dashboard with recent files and templates.
@@ -381,9 +381,15 @@ Thin backend (Phase 7a)
 - Sync prototype: stable IDs and op‑log format with `created_at/updated_at/version` columns; basic push/pull over HTTPS.
 
 Operational considerations
-- Reliability: SQLite WAL, periodic VACUUM; DB is disposable and rebuildable from `comic.json`.
-- Backups: users back up the project folder; the embedded DB can be excluded—rebuild on demand.
-- Portability: projects open read‑only without the DB; app creates/rebuilds index as needed.
+- Reliability: SQLite WAL. The embedded index is disposable and can be rebuilt from `comic.json` and assets at any time.
+- Backups: back up the project folder (comic.json, script/, pages/, assets/, styles/, exports/, and backups/). You can exclude `.gcw/` — the index/caches are derived and rebuildable.
+- Portability: projects open even if `.gcw/index.sqlite` is missing; the app detects this and creates/rebuilds the index.
+- Maintenance (embedded SQLite):
+  - Defaults: WAL enabled; prefer `auto_vacuum=INCREMENTAL`; keep `wal_autocheckpoint` around ~1000 pages.
+  - Schedule: best effort maintenance on open/close when idle and either (a) last maintenance > 7 days, or (b) DB size > ~128 MiB.
+    - Run `PRAGMA optimize;` and `INSERT INTO fts_documents(fts_documents) VALUES('optimize');` to tune FTS.
+    - Run `PRAGMA incremental_vacuum;` to reclaim free pages without a full rewrite.
+  - After large deletions (e.g., removing many pages/assets), consider a one‑off full `VACUUM` or simply delete `.gcw/index.sqlite` and let the app rebuild.
 - Security: TLS for backend; no secrets stored in local DB; sanitize cached text used for FTS.
 
 Testing and parity
