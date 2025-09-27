@@ -331,7 +331,7 @@ func Run(projectDir string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			res, err := storage.Search(ctx, h.Root, storage.SearchQuery{Text: text, Limit: 200})
-			fyne.CurrentApp().Driver().RunOnMain(func() {
+			fyne.Do(func() {
 				if err != nil {
 					l.Error("search failed", slog.Any("err", err))
 					status.SetText("Search failed.")
@@ -379,7 +379,7 @@ func Run(projectDir string) error {
 
 	// Shortcut: focus omnibox with Ctrl+K
 	w.Canvas().AddShortcut(&desktop.CustomShortcut{KeyName: fyne.KeyK, Modifier: fyne.KeyModifierControl}, func(sc fyne.Shortcut) {
-		omniBox.Focus()
+		w.Canvas().Focus(omniBox)
 	})
 
 	// Script editor UI
@@ -988,7 +988,7 @@ func Run(projectDir string) error {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
 			err := storage.RebuildIndex(ctx, h.Root, h.Project)
-			fyne.CurrentApp().Driver().RunOnMain(func() {
+			fyne.Do(func() {
 				if err != nil {
 					l.Error("rebuild index failed", slog.Any("err", err))
 					dialog.ShowError(err, w)
@@ -1037,7 +1037,7 @@ func Run(projectDir string) error {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
 				res, err := storage.Search(ctx, h.Root, sq)
-				fyne.CurrentApp().Driver().RunOnMain(func() {
+				fyne.Do(func() {
 					if err != nil {
 						l.Error("search failed", slog.Any("err", err))
 						dialog.ShowError(err, w)
