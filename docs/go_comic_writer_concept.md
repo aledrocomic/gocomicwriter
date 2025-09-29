@@ -273,6 +273,8 @@ Alignment with Definition of Done:
 - [✓] Asset library with previews and drag-and-drop into pages.
 - [✓] Style pack manager (install/export styles and templates).
 - [✓] Undo/redo stack with snapshots and performance safeguards.
+- [ ] Fix build failure
+- [ ] snapshots.go and snapshots_test.go unhandled errors SQL dialect is not configured (code analysis)
 
 ### Phase 7 — Collaboration (Optional Early Access)
 - [ ] Commenting and review mode on script and pages.
