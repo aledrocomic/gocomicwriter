@@ -269,10 +269,10 @@ Alignment with Definition of Done:
 - [✓] Docs and ops: clarify DB is derived/rebuildable; backup guidance; vacuum schedule.
 
 ### Phase 6 — Project UX & Assets
-- [ ] Project dashboard with recent files and templates.
-- [ ] Asset library with previews and drag-and-drop into pages.
-- [ ] Style pack manager (install/export styles and templates).
-- [ ] Undo/redo stack with snapshots and performance safeguards.
+- [✓] Project dashboard with recent files and templates.
+- [✓] Asset library with previews and drag-and-drop into pages.
+- [✓] Style pack manager (install/export styles and templates).
+- [✓] Undo/redo stack with snapshots and performance safeguards.
 
 ### Phase 7 — Collaboration (Optional Early Access)
 - [ ] Commenting and review mode on script and pages.
