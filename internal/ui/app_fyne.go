@@ -2,18 +2,22 @@
 
 /*
  * Copyright (c) 2025 by Alexander Drost, Oldenburg, Germany.
- * This file is licensed to you under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License.  You may obtain a copy of the License at
+ * This file is licensed to you under the Apache License, Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.  You may obtain a copy of the License at
  *   http://www.apache.org/licenses/LICENSE-2.0
  * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the License for the specific language governing permissions and limitations under the License.
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.  See the License for the
+ *  specific language governing permissions and limitations under the License.
  */
 
 package ui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"image/color"
+	"io/fs"
 	"log/slog"
 	"math"
 	"os"
@@ -39,6 +43,8 @@ import (
 	applog "gocomicwriter/internal/log"
 	"gocomicwriter/internal/script"
 	"gocomicwriter/internal/storage"
+	"gocomicwriter/internal/stylepack"
+	"gocomicwriter/internal/undo"
 	"gocomicwriter/internal/vector"
 	"gocomicwriter/internal/version"
 )
@@ -69,10 +75,63 @@ func Run(projectDir string) error {
 	status := widget.NewLabel("Ready")
 	canvasWidget := NewPageCanvas()
 
-	// Canvas layout panes
 	// Page navigation (left)
 	currentIssueIdx := 0
 	currentPageIdx := 0
+
+	// Undo manager with safeguards (snapshots capture entire Issue for simplicity)
+	undoMgr := undo.NewManager(undo.Config{
+		MaxBytes:    32 * 1024 * 1024, // 32 MiB in-memory cap
+		MaxPerPage:  20,               // keep up to 20 snapshots per page
+		MinInterval: 300 * time.Millisecond,
+	})
+
+	captureIssueSnapshot := func() ([]byte, int, error) {
+		if ph == nil || len(ph.Project.Issues) == 0 {
+			return nil, 0, fmt.Errorf("no project/issue open")
+		}
+		iss := ph.Project.Issues[currentIssueIdx]
+		blob, err := json.Marshal(iss)
+		if err != nil {
+			return nil, 0, err
+		}
+		pgNum := 0
+		if len(iss.Pages) > 0 && currentPageIdx >= 0 && currentPageIdx < len(iss.Pages) {
+			pgNum = iss.Pages[currentPageIdx].Number
+		}
+		return blob, pgNum, nil
+	}
+
+	// Forward declarations for UI refreshers referenced before assignment
+	var refreshPagesList func()
+	var refreshPanelsUI func()
+
+	applyIssueSnapshot := func(blob []byte) error {
+		if ph == nil {
+			return fmt.Errorf("no project open")
+		}
+		var iss domain.Issue
+		if err := json.Unmarshal(blob, &iss); err != nil {
+			return err
+		}
+		if currentIssueIdx < 0 {
+			currentIssueIdx = 0
+		}
+		if currentIssueIdx >= len(ph.Project.Issues) {
+			ph.Project.Issues = append(ph.Project.Issues, iss)
+		} else {
+			ph.Project.Issues[currentIssueIdx] = iss
+		}
+		if err := storage.Save(ph); err != nil {
+			return err
+		}
+		refreshPagesList()
+		refreshPanelsUI()
+		return nil
+	}
+
+	// Canvas layout panes
+	// Page navigation (left)
 	pagesDisplay := []string{}
 	pageIdxMap := []int{}
 	pagesList := widget.NewList(
@@ -124,7 +183,7 @@ func Run(projectDir string) error {
 	canvasWidget.beatOverlay = savedOverlay
 	beatOverlayCheck.SetChecked(savedOverlay)
 	// Build/update Pages list from model and respond to selection
-	refreshPagesList := func() {
+	refreshPagesList = func() {
 		pagesDisplay = pagesDisplay[:0]
 		pageIdxMap = pageIdxMap[:0]
 		if ph == nil || len(ph.Project.Issues) == 0 {
@@ -159,7 +218,6 @@ func Run(projectDir string) error {
 			pagesList.Select(sel)
 		}
 	}
-	var refreshPanelsUI func()
 	pagesList.OnSelected = func(id widget.ListItemID) {
 		if ph == nil || len(ph.Project.Issues) == 0 {
 			return
@@ -465,8 +523,105 @@ func Run(projectDir string) error {
 		container.NewHBox(btnAddPanel, btnUp, btnDown, btnEdit),
 	))
 	canvasCenter := container.NewMax(canvasWidget)
+	// Wire asset placement callback: append asset token into target panel notes and save
+	canvasWidget.OnPlaceAsset = func(path string, panelID string) {
+		if ph == nil {
+			return
+		}
+		rel := path
+		if abs, err := filepath.Abs(path); err == nil {
+			if r, rerr := filepath.Rel(ph.Root, abs); rerr == nil {
+				rel = r
+			}
+		}
+		iss := ph.Project.Issues[currentIssueIdx]
+		if currentPageIdx < 0 || currentPageIdx >= len(iss.Pages) {
+			return
+		}
+		pg := &ph.Project.Issues[currentIssueIdx].Pages[currentPageIdx]
+		for i := range pg.Panels {
+			if pg.Panels[i].ID == panelID {
+				note := strings.TrimSpace(pg.Panels[i].Notes)
+				entry := "asset:" + rel
+				if note == "" {
+					pg.Panels[i].Notes = entry
+				} else if !strings.Contains(note, entry) {
+					pg.Panels[i].Notes = note + "\n" + entry
+				}
+				break
+			}
+		}
+		if err := storage.Save(ph); err != nil {
+			l.Error("save after place asset", slog.Any("err", err))
+			dialog.ShowError(err, w)
+			return
+		}
+		refreshPanelsUI()
+		status.SetText("Placed asset into panel: " + panelID)
+	}
 	topBar := container.NewBorder(nil, nil, nil, nil, container.NewHBox(omniBox))
-	canvasPane := container.NewBorder(topBar, nil, left, right, canvasCenter)
+
+	// Assets pane (minimal): shows image files under project/assets and allows arming for placement
+	assetFilterEntry := widget.NewEntry()
+	assetFilterEntry.SetPlaceHolder("Filter assets")
+	assetsGrid := container.NewGridWrap(fyne.NewSize(96, 96))
+	assetsScroll := container.NewVScroll(assetsGrid)
+	assetsScroll.SetMinSize(fyne.NewSize(0, 150))
+	assetsHeader := container.NewHBox(widget.NewLabel("Assets"), widget.NewSeparator(), assetFilterEntry)
+	assetsPane := container.NewBorder(assetsHeader, nil, nil, nil, assetsScroll)
+	// Refresh function to scan and build tiles
+	refreshAssets := func() {
+		tiles := []fyne.CanvasObject{}
+		if ph == nil {
+			assetsGrid.Objects = tiles
+			assetsGrid.Refresh()
+			return
+		}
+		root := ph.Root
+		dir := filepath.Join(root, "assets")
+		filter := strings.ToLower(strings.TrimSpace(assetFilterEntry.Text))
+		_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				return nil
+			}
+			ext := strings.ToLower(filepath.Ext(path))
+			if ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".svg" {
+				return nil
+			}
+			name := filepath.Base(path)
+			if filter != "" && !strings.Contains(strings.ToLower(name), filter) {
+				return nil
+			}
+			// Create button with image preview as icon
+			makeTile := func(p string) fyne.CanvasObject {
+				data, rerr := os.ReadFile(p)
+				var btn *widget.Button
+				if rerr == nil && len(data) > 0 {
+					res := fyne.NewStaticResource(filepath.Base(p), data)
+					btn = widget.NewButtonWithIcon("", res, func() {
+						canvasWidget.armedAssetPath = p
+						status.SetText("Armed asset: " + filepath.Base(p) + " — click a panel to place")
+					})
+				} else {
+					btn = widget.NewButton(filepath.Base(p), func() {
+						canvasWidget.armedAssetPath = p
+						status.SetText("Armed asset: " + filepath.Base(p) + " — click a panel to place")
+					})
+				}
+				return container.NewVBox(btn, widget.NewLabel(name))
+			}
+			tiles = append(tiles, makeTile(path))
+			return nil
+		})
+		assetsGrid.Objects = tiles
+		assetsGrid.Refresh()
+	}
+	assetFilterEntry.OnChanged = func(string) { refreshAssets() }
+
+	canvasPane := container.NewBorder(topBar, assetsPane, left, right, canvasCenter)
 
 	// Shortcut: focus omnibox with Ctrl+K
 	w.Canvas().AddShortcut(&desktop.CustomShortcut{KeyName: fyne.KeyK, Modifier: fyne.KeyModifierControl}, func(sc fyne.Shortcut) {
@@ -920,8 +1075,13 @@ func Run(projectDir string) error {
 		container.NewTabItem("Script", scriptPane),
 		container.NewTabItem("Bible", biblePane),
 	)
-	content := container.NewBorder(nil, status, nil, nil, tabs)
-	w.SetContent(content)
+	editorContent := container.NewBorder(nil, status, nil, nil, tabs)
+	root := container.NewMax(editorContent)
+	w.SetContent(root)
+
+	// Forward declarations for view switchers used in callbacks defined below
+	var showEditor func()
+	var showDashboard func()
 
 	// Build menus
 	var closeProjItem *fyne.MenuItem
@@ -939,11 +1099,14 @@ func Run(projectDir string) error {
 			}
 			abs := uri.Path()
 			l.Info("new project folder selected", slog.String("root", abs))
-			// Step 2: prompt for project name
+			// Step 2: prompt for project name and template
 			nameEntry := widget.NewEntry()
 			nameEntry.SetPlaceHolder("Project Name")
+			templateSelect := widget.NewSelect([]string{"Blank", "3x3 Grid"}, nil)
+			templateSelect.SetSelected("Blank")
 			form := dialog.NewForm("New Project", "Create", "Cancel", []*widget.FormItem{
 				widget.NewFormItem("Name", nameEntry),
+				widget.NewFormItem("Template", templateSelect),
 			}, func(ok bool) {
 				if !ok {
 					l.Info("new project canceled at name prompt")
@@ -963,6 +1126,33 @@ func Run(projectDir string) error {
 					return
 				}
 				ph = h
+				// Apply template selection
+				tmpl := templateSelect.Selected
+				if tmpl == "3x3 Grid" {
+					issue := domain.Issue{
+						TrimWidth:        float64(canvasWidget.pageW),
+						TrimHeight:       float64(canvasWidget.pageH),
+						Bleed:            float64(canvasWidget.bleedMargin),
+						DPI:              300,
+						ReadingDirection: "ltr",
+						Pages:            []domain.Page{},
+					}
+					nodes := buildGridNodes("3x3", canvasWidget.pageW, canvasWidget.pageH, canvasWidget.trimMargin)
+					pg := domain.Page{Number: 1, Grid: "3x3", Panels: []domain.Panel{}}
+					for i, n := range nodes {
+						r := n.Bounds()
+						pg.Panels = append(pg.Panels, domain.Panel{
+							ID:       fmt.Sprintf("p%d", i+1),
+							Geometry: domain.Rect{X: float64(r.X), Y: float64(r.Y), Width: float64(r.W), Height: float64(r.H)},
+							ZOrder:   i,
+						})
+					}
+					issue.Pages = []domain.Page{pg}
+					ph.Project.Issues = []domain.Issue{issue}
+					if err := storage.Save(ph); err != nil {
+						l.Error("save after template failed", slog.Any("err", err))
+					}
+				}
 				w.SetTitle(fmt.Sprintf("Go Comic Writer — %s", h.Project.Name))
 				status.SetText(fmt.Sprintf("Created project: %s", abs))
 				// Enable Close Project now that a project is open
@@ -971,8 +1161,19 @@ func Run(projectDir string) error {
 				scriptEntry.SetText("")
 				updateOutline("")
 				refreshBible()
-				// Prompt to set issue parameters immediately for a new project
-				showIssueSetupDialog(w, ph, canvasWidget, status, l)
+				// If an issue was created by template, apply it; otherwise prompt setup
+				if len(ph.Project.Issues) > 0 {
+					canvasWidget.ApplyIssue(ph.Project.Issues[0])
+					currentIssueIdx = 0
+					currentPageIdx = 0
+					refreshPagesList()
+					refreshPanelsUI()
+					refreshAssets()
+				} else {
+					showIssueSetupDialog(w, ph, canvasWidget, status, l)
+				}
+				addRecentProject(prefs, abs)
+				showEditor()
 			}, w)
 			form.Show()
 		}, w)
@@ -1009,10 +1210,13 @@ func Run(projectDir string) error {
 						currentPageIdx = 0
 						refreshPagesList()
 						refreshPanelsUI()
+						refreshAssets()
 					}
 					l.Info("project opened", slog.String("name", ph.Project.Name))
 					// Enable Close Project as a project is now open
 					closeProjItem.Disabled = false
+					addRecentProject(prefs, abs)
+					showEditor()
 				} else {
 					l.Error("read script failed", slog.Any("err", rerr))
 				}
@@ -1063,6 +1267,7 @@ func Run(projectDir string) error {
 		canvasWidget.Refresh()
 		// Disable this menu entry as no project is open now
 		closeProjItem.Disabled = true
+		showDashboard()
 	})
 	// Initially disabled when no project is open
 	closeProjItem.Disabled = true
@@ -1071,6 +1276,80 @@ func Run(projectDir string) error {
 	openItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyO, Modifier: fyne.KeyModifierControl}
 	saveItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyS, Modifier: fyne.KeyModifierControl}
 	closeProjItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyW, Modifier: fyne.KeyModifierControl}
+
+	// Dashboard and Home support
+	var dashboard fyne.CanvasObject
+	showEditor = func() {
+		root.Objects = []fyne.CanvasObject{editorContent}
+		root.Refresh()
+	}
+	buildDashboard := func() fyne.CanvasObject {
+		title := widget.NewLabel("Project Dashboard")
+		title.TextStyle = fyne.TextStyle{Bold: true}
+		title.Alignment = fyne.TextAlignLeading
+
+		newBtn := widget.NewButton("New Project…", func() { newItem.Action() })
+		openBtn := widget.NewButton("Open Project…", func() { openItem.Action() })
+
+		recent := loadRecentProjects(prefs)
+		recList := widget.NewList(
+			func() int { return len(recent) },
+			func() fyne.CanvasObject { return widget.NewLabel("") },
+			func(i widget.ListItemID, o fyne.CanvasObject) {
+				if i >= 0 && int(i) < len(recent) {
+					o.(*widget.Label).SetText(recent[i])
+				} else {
+					o.(*widget.Label).SetText("")
+				}
+			},
+		)
+		recList.OnSelected = func(id widget.ListItemID) {
+			if id < 0 || int(id) >= len(recent) {
+				return
+			}
+			path := recent[id]
+			if err := openProject(path, &ph, w, l, status); err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			// Load script text after successful open
+			if ph != nil {
+				if txt, rerr := storage.ReadScript(ph); rerr == nil {
+					scriptEntry.SetText(txt)
+					updateOutline(txt)
+					refreshBible()
+					if len(ph.Project.Issues) > 0 {
+						canvasWidget.ApplyIssue(ph.Project.Issues[0])
+						currentIssueIdx = 0
+						currentPageIdx = 0
+						refreshPagesList()
+						refreshPanelsUI()
+					}
+					closeProjItem.Disabled = false
+					addRecentProject(prefs, path)
+					showEditor()
+				} else {
+					l.Error("read script failed", slog.Any("err", rerr))
+				}
+			}
+		}
+
+		header := widget.NewLabel("Recent Projects")
+		return container.NewBorder(
+			container.NewVBox(title, widget.NewSeparator(), container.NewHBox(newBtn, openBtn)),
+			nil, nil, nil,
+			container.NewBorder(header, nil, nil, nil, recList),
+		)
+	}
+	showDashboard = func() {
+		if dashboard == nil {
+			dashboard = buildDashboard()
+		}
+		root.Objects = []fyne.CanvasObject{dashboard}
+		root.Refresh()
+	}
+
+	homeItem := fyne.NewMenuItem("Home", func() { showDashboard() })
 
 	rebuildIndexItem := fyne.NewMenuItem("Rebuild Index", func() {
 		if ph == nil {
@@ -1194,7 +1473,97 @@ func Run(projectDir string) error {
 		form.Show()
 	})
 
-	fileMenu := fyne.NewMenu("File", newItem, openItem, saveItem, fyne.NewMenuItemSeparator(), searchItem, rebuildIndexItem, fyne.NewMenuItemSeparator(), closeProjItem)
+	// Style Pack manager menu items
+	importStylePackItem := fyne.NewMenuItem("Import Style Pack…", func() {
+		if ph == nil {
+			l.Info("menu: import style pack (no project)")
+			dialog.ShowInformation("Import Style Pack", "No project open.", w)
+			return
+		}
+		open := dialog.NewFileOpen(func(ur fyne.URIReadCloser, err error) {
+			if err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			if ur == nil {
+				return
+			}
+			path := ur.URI().Path()
+			_ = ur.Close()
+			installed, ierr := stylepack.InstallPack(ph.Root, path)
+			if ierr != nil {
+				dialog.ShowError(ierr, w)
+				return
+			}
+			dialog.ShowInformation("Import Style Pack", fmt.Sprintf("Installed %d files into styles/", installed), w)
+		}, w)
+		open.SetFilter(fstorage.NewExtensionFileFilter([]string{".zip"}))
+		open.Show()
+	})
+	exportStylePackItem := fyne.NewMenuItem("Export Styles as Pack…", func() {
+		if ph == nil {
+			l.Info("menu: export style pack (no project)")
+			dialog.ShowInformation("Export Style Pack", "No project open.", w)
+			return
+		}
+		save := dialog.NewFileSave(func(uc fyne.URIWriteCloser, err error) {
+			if err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			if uc == nil {
+				return
+			}
+			outPath := uc.URI().Path()
+			_ = uc.Close()
+			if !strings.HasSuffix(strings.ToLower(outPath), ".zip") {
+				outPath += ".zip"
+			}
+			if err := stylepack.ExportProjectStyles(ph.Root, outPath); err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			dialog.ShowInformation("Export Style Pack", "Exported to "+outPath, w)
+		}, w)
+		save.SetFileName("styles-pack.zip")
+		save.SetFilter(fstorage.NewExtensionFileFilter([]string{".zip"}))
+		save.Show()
+	})
+
+	fileMenu := fyne.NewMenu("File", homeItem, newItem, openItem, saveItem, fyne.NewMenuItemSeparator(), searchItem, rebuildIndexItem, importStylePackItem, exportStylePackItem, fyne.NewMenuItemSeparator(), closeProjItem)
+
+	// Edit menu (Undo/Redo)
+	undoMenuItem := fyne.NewMenuItem("Undo", func() {
+		if ph == nil {
+			dialog.ShowInformation("Undo", "No project open.", w)
+			return
+		}
+		if s, ok := undoMgr.Undo(0); ok {
+			if err := applyIssueSnapshot(s.Blob); err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			status.SetText("Undid last action")
+		} else {
+			dialog.ShowInformation("Undo", "Nothing to undo.", w)
+		}
+	})
+	redoMenuItem := fyne.NewMenuItem("Redo", func() {
+		if ph == nil {
+			dialog.ShowInformation("Redo", "No project open.", w)
+			return
+		}
+		if s, ok := undoMgr.Redo(0); ok {
+			if err := applyIssueSnapshot(s.Blob); err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			status.SetText("Redid last action")
+		} else {
+			dialog.ShowInformation("Redo", "Nothing to redo.", w)
+		}
+	})
+	editMenu := fyne.NewMenu("Edit", undoMenuItem, redoMenuItem)
 
 	// Issue menu with setup dialog
 	issueSetupItem := fyne.NewMenuItem("Issue Setup…", func() {
@@ -1276,9 +1645,15 @@ func Run(projectDir string) error {
 			return
 		}
 		pg := iss.Pages[currentPageIdx]
-		confirm := dialog.NewConfirm("Delete Page", fmt.Sprintf("Delete Page %d? This cannot be undone.", pg.Number), func(ok bool) {
+		confirm := dialog.NewConfirm("Delete Page", fmt.Sprintf("Delete Page %d? You can Undo this action.", pg.Number), func(ok bool) {
 			if !ok {
 				return
+			}
+			// Capture snapshot before mutation (in-memory and persisted)
+			if blob, _, err := captureIssueSnapshot(); err == nil {
+				s := undo.Snapshot{PageNumber: 0, Blob: blob, TS: time.Now()}
+				undoMgr.PushSnapshot(s)
+				go storage.SaveSnapshot(context.Background(), ph, 0, blob, s.TS)
 			}
 			// Remove page from slice
 			iss.Pages = append(iss.Pages[:currentPageIdx], iss.Pages[currentPageIdx+1:]...)
@@ -1612,7 +1987,7 @@ func Run(projectDir string) error {
 	})
 	aboutMenu := fyne.NewMenu("About", aboutItem, copyrightItem)
 
-	w.SetMainMenu(fyne.NewMainMenu(fileMenu, issueMenu, insertMenu, exportMenu, aboutMenu))
+	w.SetMainMenu(fyne.NewMainMenu(fileMenu, editMenu, issueMenu, insertMenu, exportMenu, aboutMenu))
 
 	// Persist preferences on close
 	w.SetCloseIntercept(func() {
@@ -1640,10 +2015,15 @@ func Run(projectDir string) error {
 					refreshPagesList()
 				}
 				refreshPanelsUI()
+				addRecentProject(prefs, projectDir)
 			} else {
 				l.Error("read script failed", slog.Any("err", rerr))
 			}
 		}
+	}
+
+	if ph == nil {
+		showDashboard()
 	}
 
 	w.ShowAndRun()
@@ -1911,6 +2291,10 @@ type PageCanvas struct {
 	beatOverlay bool
 	// Mapping of scene nodes to panel IDs (parallel to scene)
 	panelIDs []string
+
+	// Asset placement (minimal UX): when armed, next click on a panel will place the asset
+	armedAssetPath string
+	OnPlaceAsset   func(path string, panelID string)
 }
 
 // dragMode represents current interaction kind
@@ -2151,9 +2535,20 @@ func (p *PageCanvas) handleRects() (bbox fRect, corners [4]fRect, rot fRect, ok 
 	return bbox, corners, rot, true
 }
 
-// Tapped selects a node using hit testing
+// Tapped selects a node using hit testing, or places an armed asset into a panel
 func (p *PageCanvas) Tapped(e *fyne.PointEvent) {
 	pagePt := p.toPage(e.Position)
+	// If an asset is armed, try to place into the panel under cursor
+	if strings.TrimSpace(p.armedAssetPath) != "" && p.OnPlaceAsset != nil {
+		idx := p.hitTest(pagePt)
+		if idx >= 0 && idx < len(p.panelIDs) {
+			panelID := p.panelIDs[idx]
+			path := p.armedAssetPath
+			p.armedAssetPath = ""
+			p.OnPlaceAsset(path, panelID)
+			return
+		}
+	}
 	idx := p.hitTest(pagePt)
 	p.selected = idx
 	p.dragMode = dragNone
@@ -2457,3 +2852,59 @@ func (r *pageCanvasRenderer) Layout(size fyne.Size) {
 }
 
 func float32ToFixed(v float32) float32 { return fyne.NewSize(v, 0).Width }
+
+// Recent project persistence helpers for dashboard
+const recentPrefsKey = "recent.projects"
+const recentMax = 10
+
+func loadRecentProjects(p fyne.Preferences) []string {
+	raw := p.StringWithFallback(recentPrefsKey, "")
+	var items []string
+	if strings.TrimSpace(raw) != "" {
+		var tmp []string
+		if err := json.Unmarshal([]byte(raw), &tmp); err == nil {
+			items = tmp
+		}
+	}
+	if items == nil {
+		items = []string{}
+	}
+	// Filter out non-existing paths
+	out := make([]string, 0, len(items))
+	for _, s := range items {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, err := os.Stat(s); err == nil {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func saveRecentProjects(p fyne.Preferences, items []string) {
+	if len(items) > recentMax {
+		items = items[:recentMax]
+	}
+	b, _ := json.Marshal(items)
+	p.SetString(recentPrefsKey, string(b))
+}
+
+func addRecentProject(p fyne.Preferences, path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	abs, _ := filepath.Abs(path)
+	rec := loadRecentProjects(p)
+	out := make([]string, 0, 1+len(rec))
+	out = append(out, abs)
+	for _, s := range rec {
+		// de-dup (case-insensitive on Windows)
+		if strings.EqualFold(s, abs) {
+			continue
+		}
+		out = append(out, s)
+	}
+	saveRecentProjects(p, out)
+}

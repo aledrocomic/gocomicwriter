@@ -5,7 +5,7 @@ A Go-powered project aiming to become a writing, planning, and lettering toolcha
 This repository currently provides a development skeleton: a desktop UI, an evolving domain model, and a public JSON schema for the project manifest. The product concept and roadmap live in docs/go_comic_writer_concept.md. For the 2.x plan and tasks, see docs/go_comic_writer_concept_2x.md.
 
 - Vision: Empower comic creators to go from script to lettered pages in one streamlined, offline‑first tool.
-- Status: Early stage (0.7.0‑dev). Not production‑ready.
+- Status: Early stage (0.8.0‑dev). Not production‑ready.
 - License: Apache 2.0
 
 ## Contents
@@ -61,12 +61,16 @@ Entry points:
   - Keyboard shortcuts: Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Q.
   - Preferences persisted: window size and the Beat Coverage overlay toggle are saved between sessions.
   - The UI can start without a project and lets you create one from within the app.
+- Project dashboard: recent projects list and starter templates (Blank, 3x3 Grid).
 - Issue setup dialog: configure trim size, bleed, DPI, and reading direction (LTR/RTL) from the UI.
-- Page grids: supported via the page's `grid` property in the manifest (e.g., `"3x3"`) and previewed on the canvas; in-UI grid editing is planned.
+- Page grids: supported via the page's `grid` property in the manifest (e.g., "3x3") and previewed on the canvas; in-UI grid editing is planned.
 - Panels: add from the Inspector (Add Panel), reorder Z with Move Up/Down, and edit metadata (ID, notes). A quick filter above the panel list helps find panels by ID/notes/text.
 - Script integration (experimental): structured editor with outline and beat tagging; beats can be linked to panels; unmapped beat warnings in outline.
 - Beat coverage overlay and page‑turn pacing indicators (experimental) in the canvas to aid layout/planning.
 - Exporters (UI): Export menu for PDF (multi-page), PNG pages, SVG pages, CBZ package, and EPUB (fixed-layout). Exports include trim/bleed guides and respect issue settings.
+- Assets pane: previews images from project/assets; click to arm and place into panels.
+- Style Pack manager: import/export styles and templates via the Style Pack menu.
+- Undo/Redo: snapshot-based undo/redo with safeguards (Edit → Undo/Redo).
 - Search panel/omnibox: instant full-text search with filters (character, scene, page range, tags); navigate to results (issue/page/panel) and highlight hits.
 - About menu with environment info (Go version, OS/arch, cgo/fyne status) and a Copyright dialog.
 - Unit tests for core packages (storage, logging, crash, version, schema).
