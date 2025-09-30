@@ -102,6 +102,10 @@ func Run(projectDir string) error {
 		return blob, pgNum, nil
 	}
 
+	// Forward declarations for UI refreshers referenced before assignment
+	var refreshPagesList func()
+	var refreshPanelsUI func()
+
 	applyIssueSnapshot := func(blob []byte) error {
 		if ph == nil {
 			return fmt.Errorf("no project open")
@@ -179,7 +183,7 @@ func Run(projectDir string) error {
 	canvasWidget.beatOverlay = savedOverlay
 	beatOverlayCheck.SetChecked(savedOverlay)
 	// Build/update Pages list from model and respond to selection
-	refreshPagesList := func() {
+	refreshPagesList = func() {
 		pagesDisplay = pagesDisplay[:0]
 		pageIdxMap = pageIdxMap[:0]
 		if ph == nil || len(ph.Project.Issues) == 0 {
@@ -214,7 +218,6 @@ func Run(projectDir string) error {
 			pagesList.Select(sel)
 		}
 	}
-	var refreshPanelsUI func()
 	pagesList.OnSelected = func(id widget.ListItemID) {
 		if ph == nil || len(ph.Project.Issues) == 0 {
 			return

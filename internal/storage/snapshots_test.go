@@ -27,7 +27,9 @@ func TestSnapshotsCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InitOrOpenIndex error: %v", err)
 	}
-	db.Close()
+	if err := db.Close(); err != nil {
+		t.Fatalf("db.Close error: %v", err)
+	}
 	delta1 := []byte("hello")
 	if err := SaveSnapshot(ctx, ph, 1, delta1, time.Now()); err != nil {
 		t.Fatalf("SaveSnapshot: %v", err)

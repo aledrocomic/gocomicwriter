@@ -17,6 +17,24 @@ import (
 	"time"
 )
 
+// language=SQL
+// dialect=SQLite
+const insertSnapshotSQL = `INSERT INTO snapshots(page_id, ts, delta_blob) VALUES (?, ?, ?)`
+
+// language=SQL
+// dialect=SQLite
+const selectLatestSnapshotSQL = `SELECT ts, delta_blob FROM snapshots WHERE page_id = ? ORDER BY ts DESC LIMIT 1`
+
+// language=SQL
+// dialect=SQLite
+const listSnapshotsSQL = `SELECT ts, delta_blob FROM snapshots WHERE page_id = ? ORDER BY ts DESC LIMIT ?`
+
+// language=SQL
+// dialect=SQLite
+const pruneOldSnapshotsSQL = `DELETE FROM snapshots WHERE page_id = ? AND id NOT IN (
+	SELECT id FROM snapshots WHERE page_id = ? ORDER BY ts DESC LIMIT ?
+)`
+
 // SaveSnapshot persists a page snapshot delta blob with a timestamp.
 // It opens the project's index database if needed and inserts the record.
 func SaveSnapshot(ctx context.Context, ph *ProjectHandle, pageNumber int, delta []byte, ts time.Time) error {
@@ -28,8 +46,8 @@ func SaveSnapshot(ctx context.Context, ph *ProjectHandle, pageNumber int, delta 
 	if err != nil {
 		return err
 	}
-	defer db.Close()
-	_, err = db.ExecContext(ctx, `INSERT INTO snapshots(page_id, ts, delta_blob) VALUES (?, ?, ?)`, pageNumber, ts.UTC().Format(time.RFC3339Nano), delta)
+	defer func() { _ = db.Close() }()
+	_, err = db.ExecContext(ctx, insertSnapshotSQL, pageNumber, ts.UTC().Format(time.RFC3339Nano), delta)
 	return err
 }
 
@@ -42,10 +60,10 @@ func GetLatestSnapshot(ctx context.Context, ph *ProjectHandle, pageNumber int) (
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	var tsStr string
 	var blob []byte
-	err = db.QueryRowContext(ctx, `SELECT ts, delta_blob FROM snapshots WHERE page_id = ? ORDER BY ts DESC LIMIT 1`, pageNumber).Scan(&tsStr, &blob)
+	err = db.QueryRowContext(ctx, selectLatestSnapshotSQL, pageNumber).Scan(&tsStr, &blob)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, time.Time{}, nil
 	}
@@ -74,12 +92,12 @@ func ListSnapshots(ctx context.Context, ph *ProjectHandle, pageNumber int, limit
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
-	rows, err := db.QueryContext(ctx, `SELECT ts, delta_blob FROM snapshots WHERE page_id = ? ORDER BY ts DESC LIMIT ?`, pageNumber, limit)
+	defer func() { _ = db.Close() }()
+	rows, err := db.QueryContext(ctx, listSnapshotsSQL, pageNumber, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []struct {
 		TS   time.Time
 		Blob []byte
@@ -111,11 +129,9 @@ func PruneOldSnapshots(ctx context.Context, ph *ProjectHandle, pageNumber int, k
 	if err != nil {
 		return 0, err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	// Delete snapshots not in the newest keepLast set
-	res, err := db.ExecContext(ctx, `DELETE FROM snapshots WHERE page_id = ? AND id NOT IN (
-		SELECT id FROM snapshots WHERE page_id = ? ORDER BY ts DESC LIMIT ?
-	)`, pageNumber, pageNumber, keepLast)
+	res, err := db.ExecContext(ctx, pruneOldSnapshotsSQL, pageNumber, pageNumber, keepLast)
 	if err != nil {
 		return 0, err
 	}
