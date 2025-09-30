@@ -8,6 +8,8 @@
 
 package domain
 
+import "time"
+
 // This file defines the core data model structures for the Go Comic Writer project.
 // The intent is to closely mirror the conceptual model from docs/go_comic_writer_concept.md
 // while keeping it lightweight and compile-safe for early development.
@@ -15,10 +17,11 @@ package domain
 // Project represents a comic project and its metadata.
 // It is intended to serialize to a human-readable JSON manifest.
 type Project struct {
-	Name     string   `json:"name"`
-	Metadata Metadata `json:"metadata,omitempty"`
-	Issues   []Issue  `json:"issues"`
-	Bible    Bible    `json:"bible,omitempty"`
+	Name     string    `json:"name"`
+	Metadata Metadata  `json:"metadata,omitempty"`
+	Issues   []Issue   `json:"issues"`
+	Bible    Bible     `json:"bible,omitempty"`
+	Comments []Comment `json:"comments,omitempty"`
 }
 
 // Metadata contains optional descriptive metadata for a project.
@@ -172,4 +175,45 @@ type BibleLocation struct {
 type BibleTag struct {
 	Name  string `json:"name"`
 	Notes string `json:"notes,omitempty"`
+}
+
+// Commenting and Review Model (Phase 7 – minimal)
+// Centralized comments list with a flexible target reference that can point to script, page, panel, or balloon.
+// This keeps the manifest merge-friendly and avoids touching nested arrays for basic review workflows.
+
+type CommentStatus string
+
+const (
+	CommentOpen     CommentStatus = "open"
+	CommentResolved CommentStatus = "resolved"
+	CommentClosed   CommentStatus = "closed"
+)
+
+// CommentTarget identifies what this comment is attached to.
+// Kind values:
+// - "script": use ScriptOffset (byte or rune offset) to hint position in script file.
+// - "page":   IssueIndex + PageNumber identify the page; coordinates could be added later.
+// - "panel":  Page target plus PanelID.
+// - "balloon": Panel target plus BalloonID.
+// For cross-issue reviews, IssueIndex indexes into Project.Issues.
+// PageNumber uses the page's declared number to remain stable across reorders.
+type CommentTarget struct {
+	Kind         string `json:"kind"` // script | page | panel | balloon
+	IssueIndex   int    `json:"issueIndex,omitempty"`
+	PageNumber   int    `json:"pageNumber,omitempty"`
+	PanelID      string `json:"panelId,omitempty"`
+	BalloonID    string `json:"balloonId,omitempty"`
+	ScriptOffset int    `json:"scriptOffset,omitempty"`
+}
+
+// Comment captures a single review remark.
+// Timestamps use RFC3339 when serialized by encoding/json.
+type Comment struct {
+	ID         string        `json:"id"`
+	Author     string        `json:"author,omitempty"`
+	Body       string        `json:"body"`
+	Target     CommentTarget `json:"target"`
+	Status     CommentStatus `json:"status"`
+	CreatedAt  time.Time     `json:"createdAt"`
+	ResolvedAt *time.Time    `json:"resolvedAt,omitempty"`
 }

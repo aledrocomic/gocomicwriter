@@ -14,7 +14,11 @@
       "type": "array",
       "items": {"$ref": "#/$defs/Issue"}
     },
-    "bible": {"$ref": "#/$defs/Bible"}
+    "bible": {"$ref": "#/$defs/Bible"},
+    "comments": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Comment"}
+    }
   },
   "$defs": {
     "Metadata": {
@@ -222,6 +226,33 @@
       "properties": {
         "name": {"type": "string", "minLength": 1},
         "notes": {"type": "string"}
+      }
+    },
+    "CommentTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {"type": "string", "enum": ["script", "page", "panel", "balloon"]},
+        "issueIndex": {"type": "integer", "minimum": 0},
+        "pageNumber": {"type": "integer", "minimum": 1},
+        "panelId": {"type": "string"},
+        "balloonId": {"type": "string"},
+        "scriptOffset": {"type": "integer", "minimum": 0}
+      }
+    },
+    "Comment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "body", "target", "status", "createdAt"],
+      "properties": {
+        "id": {"type": "string"},
+        "author": {"type": "string"},
+        "body": {"type": "string"},
+        "target": {"$ref": "#/$defs/CommentTarget"},
+        "status": {"type": "string", "enum": ["open", "resolved", "closed"]},
+        "createdAt": {"type": "string", "format": "date-time"},
+        "resolvedAt": {"type": "string", "format": "date-time"}
       }
     }
   }
