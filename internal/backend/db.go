@@ -12,10 +12,15 @@ package backend
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"database/sql"
 	"embed"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -83,6 +88,7 @@ func Start() error {
 	}
 
 	mux := http.NewServeMux()
+	// Health endpoints
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
@@ -99,11 +105,136 @@ func Start() error {
 		_, _ = w.Write([]byte("ready"))
 	})
 	mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
-		// Use internal/version package if available
 		ver := getVersion()
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(ver))
+	})
+
+	// Auth secret (dev-friendly default)
+	secret := os.Getenv("GCW_AUTH_SECRET")
+	if secret == "" {
+		secret = "dev-secret-change-me"
+		log.Printf("WARN: GCW_AUTH_SECRET not set; using insecure dev secret")
+	}
+
+	// POST /api/auth/token → { token, expires_at }
+	mux.HandleFunc("/api/auth/token", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		// Optional JSON body: { "subject": "name", "ttl_seconds": 3600 }
+		var req struct {
+			Subject    string `json:"subject"`
+			TTLSeconds int64  `json:"ttl_seconds"`
+		}
+		b, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		_ = r.Body.Close()
+		_ = json.Unmarshal(b, &req)
+		if req.Subject == "" {
+			req.Subject = "dev"
+		}
+		if req.TTLSeconds <= 0 || req.TTLSeconds > 24*3600 {
+			req.TTLSeconds = 3600
+		}
+		exp := time.Now().Add(time.Duration(req.TTLSeconds) * time.Second)
+		tok, err := signToken(secret, req.Subject, exp)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"token":      tok,
+			"expires_at": exp.UTC().Format(time.RFC3339),
+		})
+	})
+
+	// GET /api/projects (auth required)
+	mux.HandleFunc("/api/projects", withAuth(secret, func(w http.ResponseWriter, r *http.Request, sub string) {
+		rows, err := db.QueryContext(r.Context(), `SELECT id, stable_id, name, updated_at, version FROM projects ORDER BY updated_at DESC`)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		defer rows.Close()
+		type proj struct {
+			ID        int64     `json:"id"`
+			StableID  string    `json:"stable_id"`
+			Name      string    `json:"name"`
+			UpdatedAt time.Time `json:"updated_at"`
+			Version   int64     `json:"version"`
+		}
+		var list []proj
+		for rows.Next() {
+			var p proj
+			if err := rows.Scan(&p.ID, &p.StableID, &p.Name, &p.UpdatedAt, &p.Version); err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			list = append(list, p)
+		}
+		if err := rows.Err(); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, list)
+	}))
+
+	// GET /api/projects/{id}/index (auth required)
+	mux.HandleFunc("/api/projects/", withAuth(secret, func(w http.ResponseWriter, r *http.Request, sub string) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		// Expect path: /api/projects/{id}/index
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(parts) != 4 || parts[0] != "api" || parts[1] != "projects" || parts[3] != "index" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		pid, err := strconv.ParseInt(parts[2], 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("invalid project id"))
+			return
+		}
+		var (
+			version int64
+			snap    []byte
+			created time.Time
+		)
+		row := db.QueryRowContext(r.Context(), `SELECT version, snapshot, created_at FROM index_snapshots WHERE project_id = $1 ORDER BY version DESC, id DESC LIMIT 1`, pid)
+		switch err := row.Scan(&version, &snap, &created); err {
+		case sql.ErrNoRows:
+			writeError(w, http.StatusNotFound, fmt.Errorf("no snapshot"))
+			return
+		case nil:
+			// ok
+		default:
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		// snapshot stored as JSONB; deliver it back as JSON inside envelope
+		var raw any
+		if err := json.Unmarshal(snap, &raw); err != nil {
+			// If not valid JSON, return raw string
+			raw = json.RawMessage(snap)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"project_id": pid,
+			"version":    version,
+			"created_at": created.UTC().Format(time.RFC3339),
+			"snapshot":   raw,
+		})
+	}))
+
+	// Placeholders for future endpoints
+	mux.HandleFunc("/api/projects/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/deltas") || strings.HasSuffix(r.URL.Path, "/comments") {
+			w.WriteHeader(http.StatusNotImplemented)
+			_, _ = w.Write([]byte("not implemented yet"))
+			return
+		}
 	})
 
 	log.Printf("gcwserver listening on %s", cfg.Addr)
@@ -202,4 +333,88 @@ func parseVersion(name string) (int64, error) {
 		return 0, fmt.Errorf("parse version from %s: %w", name, err)
 	}
 	return v, nil
+}
+
+// --- Helpers: auth and JSON ---
+
+type tokenClaims struct {
+	Sub string `json:"sub"`
+	Exp int64  `json:"exp"` // unix seconds
+}
+
+func signToken(secret, subject string, exp time.Time) (string, error) {
+	claims := tokenClaims{Sub: subject, Exp: exp.Unix()}
+	b, err := json.Marshal(claims)
+	if err != nil {
+		return "", err
+	}
+	h := hmac.New(sha256.New, []byte(secret))
+	_, _ = h.Write(b)
+	sig := h.Sum(nil)
+	payload := base64.RawURLEncoding.EncodeToString(b)
+	signature := base64.RawURLEncoding.EncodeToString(sig)
+	return payload + "." + signature, nil
+}
+
+func verifyToken(secret, token string) (string, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid token format")
+	}
+	payloadB, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return "", fmt.Errorf("invalid token payload")
+	}
+	sigB, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("invalid token signature")
+	}
+	h := hmac.New(sha256.New, []byte(secret))
+	_, _ = h.Write(payloadB)
+	expected := h.Sum(nil)
+	if !hmac.Equal(expected, sigB) {
+		return "", fmt.Errorf("bad signature")
+	}
+	var claims tokenClaims
+	if err := json.Unmarshal(payloadB, &claims); err != nil {
+		return "", fmt.Errorf("bad claims")
+	}
+	if claims.Exp < time.Now().Unix() {
+		return "", fmt.Errorf("token expired")
+	}
+	if claims.Sub == "" {
+		claims.Sub = "dev"
+	}
+	return claims.Sub, nil
+}
+
+func withAuth(secret string, next func(w http.ResponseWriter, r *http.Request, subject string)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		const prefix = "Bearer "
+		if !strings.HasPrefix(strings.ToLower(auth), strings.ToLower(prefix)) {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte("missing bearer token"))
+			return
+		}
+		token := strings.TrimSpace(auth[len(prefix):])
+		sub, err := verifyToken(secret, token)
+		if err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte("invalid token"))
+			return
+		}
+		next(w, r, sub)
+	}
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	enc := json.NewEncoder(w)
+	_ = enc.Encode(v)
+}
+
+func writeError(w http.ResponseWriter, status int, err error) {
+	writeJSON(w, status, map[string]any{"error": err.Error()})
 }

@@ -280,8 +280,8 @@ Alignment with Definition of Done:
 - [✓] Merge-friendly project format guidance and diff tips (see “Merge-friendly Project Format & Diff Tips”).
 
 ### Phase 7a — Thin Backend (PostgreSQL Version 17+; see "Database and Indexing — Selected Approach")
-- [ ] Define minimal backend service (Go) using PostgreSQL Version 17+: schema for projects, `documents`, full-text via `tsvector`+GIN, `cross_refs`, assets metadata; migrations.
-- [ ] API endpoints: auth (token), list projects, pull index snapshot; later: push deltas and comments.
+- [✓] Define minimal backend service (Go) using PostgreSQL Version 17+: schema for projects, `documents`, full-text via `tsvector`+GIN, `cross_refs`, assets metadata; migrations.
+- [✓] API endpoints: auth (token), list projects, pull index snapshot; later: push deltas and comments.
 - [ ] Desktop integration (behind feature flag): manual "Connect to Server"; read-only listing and search first; file-based `comic.json` remains the source of truth.
 - [ ] Sync prototype: op-log format and stable IDs; `created_at/updated_at/version` columns; basic push/pull over HTTPS (no conflict resolution yet).
 - [ ] Security/ops: TLS, per-user auth, Docker dev stack (Postgres + MinIO optional), config via env; health checks.
