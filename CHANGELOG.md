@@ -6,12 +6,16 @@ The format is based on Keep a Changelog (https://keepachangelog.com/en/1.1.0/),
 and this project adheres to Semantic Versioning. This is a pre-release
 (0.x) and APIs may change at any time.
 
-## [0.8.0-dev] - 2025-mm-dd (planned release in October 2025)
+## [0.8.0-dev] - 2025-09-30 
 
 ### Added
--Added delete option for pages and inserted items
--Added sidebar navigation for pages
+- Added delete option for pages and inserted items
+- Added sidebar navigation for pages
 - internal package features are available in the UI
+- Project dashboard with recent files and templates.
+- Asset library with previews and drag-and-drop into pages.
+- Style pack manager (install/export styles and templates).
+- Undo/redo stack with snapshots and performance safeguards.
 
 ## [0.7.0-dev] - 2025-09-27
 
