@@ -5,7 +5,7 @@ A Go-powered project aiming to become a writing, planning, and lettering toolcha
 This repository currently provides a development skeleton: a desktop UI, an evolving domain model, and a public JSON schema for the project manifest. The product concept and roadmap live in docs/go_comic_writer_concept.md. For the 2.x plan and tasks, see docs/go_comic_writer_concept_2x.md.
 
 - Vision: Empower comic creators to go from script to lettered pages in one streamlined, offline‑first tool.
-- Status: Early stage (0.8.0‑dev). Not production‑ready.
+- Status: Early stage (0.9.0‑dev). Not production‑ready.
 - License: Apache 2.0
 
 ## Contents
@@ -72,6 +72,9 @@ Entry points:
 - Style Pack manager: import/export styles and templates via the Style Pack menu.
 - Undo/Redo: snapshot-based undo/redo with safeguards (Edit → Undo/Redo).
 - Search panel/omnibox: instant full-text search with filters (character, scene, page range, tags); navigate to results (issue/page/panel) and highlight hits.
+- Commenting and review mode on script and pages (minimal; behind feature flag).
+- Change tracking in script editor.
+- Documentation: Merge-friendly project format guidance and diff tips (see “Merge-friendly Project Format & Diff Tips” in docs/go_comic_writer_concept.md).
 - About menu with environment info (Go version, OS/arch, cgo/fyne status) and a Copyright dialog.
 - Unit tests for core packages (storage, logging, crash, version, schema).
 

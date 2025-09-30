@@ -75,6 +75,9 @@ func Run(projectDir string) error {
 	status := widget.NewLabel("Ready")
 	canvasWidget := NewPageCanvas()
 
+	// Forward declaration for script editor entry used by various callbacks
+	var scriptEntry *widget.Entry
+
 	// Page navigation (left)
 	currentIssueIdx := 0
 	currentPageIdx := 0
@@ -559,7 +562,152 @@ func Run(projectDir string) error {
 		refreshPanelsUI()
 		status.SetText("Placed asset into panel: " + panelID)
 	}
-	topBar := container.NewBorder(nil, nil, nil, nil, container.NewHBox(omniBox))
+	// Review mode controls and quick comment entry (minimal Phase 7)
+	reviewMode := prefs.BoolWithFallback("review.mode", false)
+	reviewCheck := widget.NewCheck("Review Mode", func(b bool) {
+		reviewMode = b
+		prefs.SetBool("review.mode", b)
+	})
+	reviewCheck.SetChecked(reviewMode)
+
+	// Script change tracking toggle and history
+	trackChanges := prefs.BoolWithFallback("script.track", false)
+	trackCheck := widget.NewCheck("Track Changes", func(b bool) {
+		trackChanges = b
+		prefs.SetBool("script.track", b)
+	})
+	trackCheck.SetChecked(trackChanges)
+
+	scriptHistBtn := widget.NewButton("Script History", func() {
+		if ph == nil {
+			dialog.ShowInformation("No project", "Open a project first.", w)
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		items, err := storage.ListScriptSnapshots(ctx, ph, 20)
+		if err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		if len(items) == 0 {
+			dialog.ShowInformation("Script History", "No snapshots yet.", w)
+			return
+		}
+		box := container.NewVBox()
+		for _, it := range items {
+			ts := it.TS
+			text := it.Text // capture for closure
+			label := ts.Local().Format("2006-01-02 15:04:05")
+			btn := widget.NewButton("Restore "+label, func() {
+				d := dialog.NewConfirm("Restore Script", "Replace editor contents with snapshot from "+label+"?", func(ok bool) {
+					if !ok {
+						return
+					}
+					scriptEntry.SetText(text)
+					status.SetText("Restored script from " + label)
+				}, w)
+				d.Show()
+			})
+			box.Add(btn)
+		}
+		d := dialog.NewCustom("Script History", "Close", box, w)
+		d.Resize(fyne.NewSize(500, 400))
+		d.Show()
+	})
+
+	addPageCommentBtn := widget.NewButton("Add Page Comment", func() {
+		if ph == nil || len(ph.Project.Issues) == 0 {
+			dialog.ShowInformation("No project", "Open a project first.", w)
+			return
+		}
+		iss := ph.Project.Issues[currentIssueIdx]
+		if len(iss.Pages) == 0 || currentPageIdx < 0 || currentPageIdx >= len(iss.Pages) {
+			dialog.ShowInformation("No page", "Select a page first.", w)
+			return
+		}
+		entry := widget.NewMultiLineEntry()
+		entry.SetPlaceHolder("Enter a comment for this page…")
+		d := dialog.NewCustomConfirm("New Page Comment", "Add", "Cancel", entry, func(ok bool) {
+			if !ok {
+				return
+			}
+			body := strings.TrimSpace(entry.Text)
+			if body == "" {
+				return
+			}
+			iss := ph.Project.Issues[currentIssueIdx]
+			pgNum := iss.Pages[currentPageIdx].Number
+			c := domain.Comment{
+				ID:        fmt.Sprintf("cmt-%d", time.Now().UnixNano()),
+				Body:      body,
+				Target:    domain.CommentTarget{Kind: "page", IssueIndex: currentIssueIdx, PageNumber: pgNum},
+				Status:    domain.CommentOpen,
+				CreatedAt: time.Now(),
+			}
+			ph.Project.Comments = append(ph.Project.Comments, c)
+			if err := storage.Save(ph); err != nil {
+				l.Error("save after add comment", slog.Any("err", err))
+				dialog.ShowError(err, w)
+				return
+			}
+			status.SetText("Added comment to page")
+		}, w)
+		d.Resize(fyne.NewSize(500, 300))
+		d.Show()
+	})
+
+	addScriptCommentBtn := widget.NewButton("Add Script Comment", func() {
+		if ph == nil {
+			dialog.ShowInformation("No project", "Open a project first.", w)
+			return
+		}
+		entry := widget.NewMultiLineEntry()
+		entry.SetPlaceHolder("Enter a comment for the script…")
+		d := dialog.NewCustomConfirm("New Script Comment", "Add", "Cancel", entry, func(ok bool) {
+			if !ok {
+				return
+			}
+			body := strings.TrimSpace(entry.Text)
+			if body == "" {
+				return
+			}
+			c := domain.Comment{
+				ID:        fmt.Sprintf("cmt-%d", time.Now().UnixNano()),
+				Body:      body,
+				Target:    domain.CommentTarget{Kind: "script"},
+				Status:    domain.CommentOpen,
+				CreatedAt: time.Now(),
+			}
+			ph.Project.Comments = append(ph.Project.Comments, c)
+			if err := storage.Save(ph); err != nil {
+				l.Error("save after add script comment", slog.Any("err", err))
+				dialog.ShowError(err, w)
+				return
+			}
+			status.SetText("Added comment to script")
+		}, w)
+		d.Resize(fyne.NewSize(500, 300))
+		d.Show()
+	})
+
+	refreshReviewButtons := func() {
+		if reviewMode && ph != nil {
+			addPageCommentBtn.Enable()
+			addScriptCommentBtn.Enable()
+		} else {
+			addPageCommentBtn.Disable()
+			addScriptCommentBtn.Disable()
+		}
+	}
+	refreshReviewButtons()
+	reviewCheck.OnChanged = func(b bool) {
+		reviewMode = b
+		prefs.SetBool("review.mode", b)
+		refreshReviewButtons()
+	}
+
+	topBar := container.NewBorder(nil, nil, nil, nil, container.NewHBox(omniBox, reviewCheck, trackCheck, addPageCommentBtn, addScriptCommentBtn, scriptHistBtn))
 
 	// Assets pane (minimal): shows image files under project/assets and allows arming for placement
 	assetFilterEntry := widget.NewEntry()
@@ -629,8 +777,11 @@ func Run(projectDir string) error {
 	})
 
 	// Script editor UI
-	scriptEntry := widget.NewMultiLineEntry()
+	scriptEntry = widget.NewMultiLineEntry()
 	scriptEntry.SetPlaceHolder("Type your script here. Use scene headers like \"# Scene Title\" and character lines like \"ALICE: Hello\". Indent continuation lines with two spaces.")
+	// Change tracking state (debounced snapshots)
+	var lastScriptSnapTS time.Time
+	var lastScriptSnapText string
 	// Outline data structures
 	type outlineItem struct {
 		kind      string   // scene, dialogue, caption, beat
@@ -852,7 +1003,22 @@ func Run(projectDir string) error {
 			status.SetText("Script: no beats detected")
 		}
 	}
-	scriptEntry.OnChanged = func(s string) { updateOutline(s) }
+	scriptEntry.OnChanged = func(s string) {
+		updateOutline(s)
+		if trackChanges && ph != nil {
+			// Debounce: only snapshot if at least 2s passed and content changed
+			if time.Since(lastScriptSnapTS) > 2*time.Second && s != lastScriptSnapText {
+				localText := s
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					defer cancel()
+					_ = storage.SaveScriptSnapshot(ctx, ph, localText, time.Now())
+				}()
+				lastScriptSnapTS = time.Now()
+				lastScriptSnapText = s
+			}
+		}
+	}
 
 	// Script insertion controls leveraging the bible
 	insertCharBtn := widget.NewButton("Insert Character", func() {
@@ -1126,6 +1292,7 @@ func Run(projectDir string) error {
 					return
 				}
 				ph = h
+				refreshReviewButtons()
 				// Apply template selection
 				tmpl := templateSelect.Selected
 				if tmpl == "3x3 Grid" {
@@ -1159,6 +1326,8 @@ func Run(projectDir string) error {
 				closeProjItem.Disabled = false
 				// Clear any existing script in the editor for a fresh start
 				scriptEntry.SetText("")
+				lastScriptSnapText = ""
+				lastScriptSnapTS = time.Now()
 				updateOutline("")
 				refreshBible()
 				// If an issue was created by template, apply it; otherwise prompt setup
@@ -1201,6 +1370,8 @@ func Run(projectDir string) error {
 			if ph != nil {
 				if txt, rerr := storage.ReadScript(ph); rerr == nil {
 					scriptEntry.SetText(txt)
+					lastScriptSnapText = txt
+					lastScriptSnapTS = time.Now()
 					updateOutline(txt)
 					refreshBible()
 					if len(ph.Project.Issues) > 0 {
@@ -1211,6 +1382,7 @@ func Run(projectDir string) error {
 						refreshPagesList()
 						refreshPanelsUI()
 						refreshAssets()
+						refreshReviewButtons()
 					}
 					l.Info("project opened", slog.String("name", ph.Project.Name))
 					// Enable Close Project as a project is now open
@@ -1250,10 +1422,13 @@ func Run(projectDir string) error {
 		l.Info("menu: close project")
 		// Clear project state and UI without closing the window
 		ph = nil
+		refreshReviewButtons()
 		w.SetTitle("Go Comic Writer")
 		status.SetText("Project closed.")
 		// Clear editors and lists
 		scriptEntry.SetText("")
+		lastScriptSnapText = ""
+		lastScriptSnapTS = time.Now()
 		updateOutline("")
 		panelFilter = ""
 		panelIDs = panelIDs[:0]
@@ -1316,6 +1491,8 @@ func Run(projectDir string) error {
 			if ph != nil {
 				if txt, rerr := storage.ReadScript(ph); rerr == nil {
 					scriptEntry.SetText(txt)
+					lastScriptSnapText = txt
+					lastScriptSnapTS = time.Now()
 					updateOutline(txt)
 					refreshBible()
 					if len(ph.Project.Issues) > 0 {
@@ -1324,6 +1501,7 @@ func Run(projectDir string) error {
 						currentPageIdx = 0
 						refreshPagesList()
 						refreshPanelsUI()
+						refreshReviewButtons()
 					}
 					closeProjItem.Disabled = false
 					addRecentProject(prefs, path)
@@ -2006,6 +2184,8 @@ func Run(projectDir string) error {
 		} else {
 			if txt, rerr := storage.ReadScript(ph); rerr == nil {
 				scriptEntry.SetText(txt)
+				lastScriptSnapText = txt
+				lastScriptSnapTS = time.Now()
 				updateOutline(txt)
 				refreshBible()
 				if len(ph.Project.Issues) > 0 {
