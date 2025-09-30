@@ -6,6 +6,13 @@ The format is based on Keep a Changelog (https://keepachangelog.com/en/1.1.0/),
 and this project adheres to Semantic Versioning. This is a pre-release
 (0.x) and APIs may change at any time.
 
+## [0.9.0-dev] - 2025-10-01
+
+### Added
+- Commenting and review mode on script and pages (minimal; behind feature flag).
+- Change tracking in script editor.
+- Merge-friendly project format guidance and diff tips (see “Merge-friendly Project Format & Diff Tips” in go_comic_writer_concept.md)
+
 ## [0.8.0-dev] - 2025-09-30 
 
 ### Added
