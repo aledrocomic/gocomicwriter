@@ -275,9 +275,9 @@ Alignment with Definition of Done:
 - [✓] Undo/redo stack with snapshots and performance safeguards.
 
 ### Phase 7 — Collaboration (Optional Early Access)
-- [ ] Commenting and review mode on script and pages.
-- [ ] Change tracking in script editor.
-- [ ] Merge-friendly project format guidance and diff tips.
+- [✓] Commenting and review mode on script and pages (minimal; behind feature flag).
+- [✓] Change tracking in script editor.
+- [✓] Merge-friendly project format guidance and diff tips (see “Merge-friendly Project Format & Diff Tips”).
 
 ### Phase 7a — Thin Backend (PostgreSQL Version 17+; see "Database and Indexing — Selected Approach")
 - [ ] Define minimal backend service (Go) using PostgreSQL Version 17+: schema for projects, `documents`, full-text via `tsvector`+GIN, `cross_refs`, assets metadata; migrations.
@@ -321,6 +321,64 @@ Alignment with Definition of Done:
 - Cross-platform text rendering parity: rely on a single shaping/layout engine and comprehensive test scenes.
 - Large project performance: incremental rendering, background export, and careful memory management.
 - Merge conflicts in binary assets: keep manifests text-based and assets external; provide diff tooling for JSON.
+
+
+## Merge-friendly Project Format & Diff Tips
+
+Goals
+- Keep diffs small and readable; enable low-friction code reviews for writers and artists.
+- Avoid churn: do not rewrite unrelated parts of the manifest on save.
+- Make three-way merges predictable via stable IDs and canonical ordering.
+
+Source of truth and boundaries
+- Manifest: comic.json is the single, human-readable source of truth for structure and text. UTF-8 (no BOM), LF line endings, final newline.
+- External assets: fonts, images, placed SVGs live under assets/. Never embed binary blobs in JSON.
+- Derived data: .gcw/ contains the SQLite index and caches; it is disposable and should not be committed.
+- Scripts: store raw scripts in script/ as text files; the manifest links beats/panels via IDs rather than embedding large scripts.
+
+Stable identifiers
+- Use stable, opaque string IDs (e.g., ULID/UUIDv7) for pages, panels, balloons, styles, and comments.
+- Never reuse IDs after deletion; generate a new one when recreating items.
+- Prefer referencing by IDs instead of array indexes in cross-links (e.g., linkedBeats).
+
+Canonical ordering and formatting
+- Keys: when writing comic.json, use deterministic key order and pretty-print with 2-space indents.
+- Floats: normalize to a fixed precision to avoid cross-platform drift (e.g., 3 decimal places).
+- Arrays: sort consistently to avoid reorder diffs:
+  - Project.issues in intended narrative order (stable unless explicitly reordered).
+  - Issue.pages by Page.number ascending.
+  - Page.panels by zOrder ascending, then id.
+  - Panel.balloons by id (use zOrder only if it is explicit and stable).
+  - Bible lists (characters, locations, tags) by name (case-insensitive).
+  - Styles by name.
+- Save behavior: only touch modified subtrees; preserve unknown keys for forward-compatibility.
+
+Git configuration and diff tools (recommended)
+- .gitattributes suggestions:
+  comic.json text eol=lf diff=json
+  pages/*.json text eol=lf diff=json
+  script/* text eol=lf
+  assets/** -text
+  .gcw/** export-ignore
+- Optional JSON diff driver (makes JSON diffs stable by normalizing keys):
+  git config diff.json.textconv "jq --sort-keys ."
+- Helpful review flags:
+  - git diff --word-diff=color --word-diff-regex='[^\s,]+' for dialogue-only changes.
+  - git diff -w to ignore whitespace-only changes.
+  - In GitHub/GitLab UI, enable “Hide whitespace changes”.
+
+Conflict resolution playbook
+- Concurrent panel additions on the same page: keep both panel objects, ensure distinct IDs, then re-sort per canonical rules.
+- Text edits in the same balloon: manually merge TextRun.content; retain a single balloon ID; ensure style/shape are consistent.
+- Array reorder conflicts: prefer the canonical sort; do not introduce ad-hoc ordering.
+- Deletions vs edits: if one branch deletes an object and the other edits it, confirm intent with the team; if deletion wins, remove the object and clean up references.
+
+Large assets
+- Use Git LFS for large binary assets if your repository hosts source projects; never store them in comic.json.
+
+References
+- See docs/comic.schema.json for fields and structure.
+- See internal/domain/types.go for IDs and relationships used by the app.
 
 
 ---

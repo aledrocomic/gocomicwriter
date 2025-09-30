@@ -256,6 +256,14 @@ func ensureIndexSchema(ctx context.Context, db *sql.DB) error {
 			delta_blob BLOB    NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_snapshots_page_ts ON snapshots(page_id, ts);`,
+
+		// Script snapshots (history of script text for change tracking)
+		`CREATE TABLE IF NOT EXISTS script_snapshots (
+			id    INTEGER PRIMARY KEY,
+			ts    TEXT    NOT NULL,
+			text  TEXT    NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_script_snapshots_ts ON script_snapshots(ts);`,
 	}
 	for _, q := range ddl {
 		if _, err := db.ExecContext(ctx, q); err != nil {
