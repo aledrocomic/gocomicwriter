@@ -37,6 +37,7 @@ import (
 	fstorage "fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/widget"
 
+	"gocomicwriter/internal/backend"
 	"gocomicwriter/internal/crash"
 	"gocomicwriter/internal/domain"
 	"gocomicwriter/internal/export"
@@ -1249,6 +1250,148 @@ func Run(projectDir string) error {
 	var showEditor func()
 	var showDashboard func()
 
+	// Server integration (feature-flagged) helpers
+	serverFeatureEnabled := func() bool {
+		v := strings.ToLower(strings.TrimSpace(os.Getenv("GCW_ENABLE_SERVER")))
+		return v == "1" || v == "true" || v == "on"
+	}
+
+	showServerBrowserWindow := func(client *backend.Client) {
+		win := fyneApp.NewWindow("Server: Projects (Read-only)")
+		win.Resize(fyne.NewSize(900, 600))
+
+		// Left: project list with filter
+		var projects []backend.Project
+		var filtered []backend.Project
+
+		filterEntry := widget.NewEntry()
+		filterEntry.SetPlaceHolder("Filter projects…")
+
+		list := widget.NewList(
+			func() int { return len(filtered) },
+			func() fyne.CanvasObject { return widget.NewLabel("") },
+			func(i widget.ListItemID, o fyne.CanvasObject) {
+				if i >= 0 && int(i) < len(filtered) {
+					o.(*widget.Label).SetText(fmt.Sprintf("%s (v%d)", filtered[i].Name, filtered[i].Version))
+				} else {
+					o.(*widget.Label).SetText("")
+				}
+			},
+		)
+
+		// Right: snapshot JSON view + search
+		snapshotTitle := widget.NewLabel("Select a project to view its index snapshot")
+		jsonView := widget.NewMultiLineEntry()
+		jsonView.Wrapping = fyne.TextWrapWord
+		jsonView.SetMinRowsVisible(10)
+		jsonView.Disable()
+		jsonSearch := widget.NewEntry()
+		jsonSearch.SetPlaceHolder("Search in snapshot text…")
+		matchLabel := widget.NewLabel("")
+
+		updateFilter := func() {
+			q := strings.ToLower(strings.TrimSpace(filterEntry.Text))
+			if q == "" {
+				filtered = append(filtered[:0], projects...)
+			} else {
+				filtered = filtered[:0]
+				for _, p := range projects {
+					if strings.Contains(strings.ToLower(p.Name), q) || strings.Contains(strings.ToLower(p.StableID), q) {
+						filtered = append(filtered, p)
+					}
+				}
+			}
+			list.Refresh()
+		}
+		filterEntry.OnChanged = func(string) { updateFilter() }
+
+		jsonSearch.OnChanged = func(s string) {
+			text := strings.ToLower(jsonView.Text)
+			term := strings.ToLower(strings.TrimSpace(s))
+			if term == "" {
+				matchLabel.SetText("")
+				return
+			}
+			count := strings.Count(text, term)
+			matchLabel.SetText(fmt.Sprintf("Matches: %d", count))
+		}
+
+		list.OnSelected = func(id widget.ListItemID) {
+			if id < 0 || int(id) >= len(filtered) {
+				return
+			}
+			proj := filtered[id]
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			defer cancel()
+			env, err := client.GetIndexSnapshot(ctx, proj.ID)
+			if err != nil {
+				dialog.ShowError(err, win)
+				return
+			}
+			snapshotTitle.SetText(fmt.Sprintf("Project: %s — Version %d — Snapshot at %s", proj.Name, env.Version, env.CreatedAt))
+			b, _ := json.MarshalIndent(env.Snapshot, "", "  ")
+			jsonView.SetText(string(b))
+			jsonSearch.SetText("")
+			matchLabel.SetText("")
+		}
+
+		left := container.NewBorder(filterEntry, nil, nil, nil, list)
+		right := container.NewBorder(container.NewVBox(snapshotTitle, container.NewHBox(jsonSearch, matchLabel)), nil, nil, nil, container.NewVScroll(jsonView))
+		split := container.NewHSplit(left, right)
+		split.Offset = 0.33
+
+		win.SetContent(split)
+
+		// Load projects synchronously on the UI thread to avoid RunOnMain/Driver API differences
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		plist, err := client.ListProjects(ctx)
+		if err != nil {
+			fyne.CurrentApp().SendNotification(&fyne.Notification{Title: "Server", Content: fmt.Sprintf("List projects failed: %v", err)})
+		} else {
+			projects = plist
+			filtered = append(filtered[:0], projects...)
+			list.Refresh()
+		}
+
+		win.Show()
+	}
+
+	showServerConnectDialog := func() {
+		urlEntry := widget.NewEntry()
+		urlEntry.SetPlaceHolder("https://server:8080")
+		tokEntry := widget.NewPasswordEntry()
+		tokEntry.SetPlaceHolder("Bearer token")
+
+		// Prefill from preferences if available
+		if u := prefs.StringWithFallback("server.url", ""); u != "" {
+			urlEntry.SetText(u)
+		}
+		if t := prefs.StringWithFallback("server.token", ""); t != "" {
+			tokEntry.SetText(t)
+		}
+
+		form := dialog.NewForm("Connect to Server", "Connect", "Cancel", []*widget.FormItem{
+			widget.NewFormItem("URL", urlEntry),
+			widget.NewFormItem("Token", tokEntry),
+		}, func(ok bool) {
+			if !ok {
+				return
+			}
+			base := strings.TrimSpace(urlEntry.Text)
+			tok := strings.TrimSpace(tokEntry.Text)
+			if base == "" || tok == "" {
+				dialog.ShowInformation("Connect to Server", "Please enter URL and token.", w)
+				return
+			}
+			prefs.SetString("server.url", base)
+			prefs.SetString("server.token", tok)
+			cl := backend.NewClient(base, tok)
+			showServerBrowserWindow(cl)
+		}, w)
+		form.Show()
+	}
+
 	// Build menus
 	var closeProjItem *fyne.MenuItem
 	newItem := fyne.NewMenuItem("New…", func() {
@@ -2165,7 +2308,14 @@ func Run(projectDir string) error {
 	})
 	aboutMenu := fyne.NewMenu("About", aboutItem, copyrightItem)
 
-	w.SetMainMenu(fyne.NewMainMenu(fileMenu, editMenu, issueMenu, insertMenu, exportMenu, aboutMenu))
+	menus := []*fyne.Menu{fileMenu, editMenu, issueMenu, insertMenu, exportMenu}
+	if serverFeatureEnabled() {
+		connectItem := fyne.NewMenuItem("Connect to Server…", func() { showServerConnectDialog() })
+		serverMenu := fyne.NewMenu("Server", connectItem)
+		menus = append(menus, serverMenu)
+	}
+	menus = append(menus, aboutMenu)
+	w.SetMainMenu(fyne.NewMainMenu(menus...))
 
 	// Persist preferences on close
 	w.SetCloseIntercept(func() {

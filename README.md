@@ -73,6 +73,7 @@ Entry points:
 - Undo/Redo: snapshot-based undo/redo with safeguards (Edit → Undo/Redo).
 - Search panel/omnibox: instant full-text search with filters (character, scene, page range, tags); navigate to results (issue/page/panel) and highlight hits.
 - Commenting and review mode on script and pages (minimal; behind feature flag).
+- Thin backend integration (feature-flagged): File → Server → Connect to Server… shows a read-only list of projects from a gcwserver instance and allows simple snapshot text search; comic.json remains the source of truth.
 - Change tracking in script editor.
 - Documentation: Merge-friendly project format guidance and diff tips (see “Merge-friendly Project Format & Diff Tips” in docs/go_comic_writer_concept.md).
 - About menu with environment info (Go version, OS/arch, cgo/fyne status) and a Copyright dialog.
@@ -235,6 +236,14 @@ The app uses structured logging (slog). Configure via environment variables:
 Examples:
 - PowerShell: `$env:GCW_LOG_LEVEL='debug'; go run -tags fyne ./cmd/gocomicwriter`
 - Bash: `GCW_LOG_FORMAT=json GCW_LOG_FILE=gcw.log go run -tags fyne ./cmd/gocomicwriter`
+
+## Feature flags
+The app includes a few early, opt-in features that are hidden by default and can be enabled via environment variables.
+
+- GCW_ENABLE_SERVER=true|1|on
+  - Adds a “Server” menu with “Connect to Server…”.
+  - Lets you connect to a running gcwserver backend (base URL + bearer token), list projects, and view an index snapshot per project.
+  - Read-only: no data is written to your local project; comic.json on disk remains the source of truth.
 
 ## Crash reports and autosave
 On an unexpected crash (panic), the app will:
