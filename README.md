@@ -12,12 +12,13 @@ This repository currently provides a development skeleton: a desktop UI, an evol
 - What is this? (short overview)
 - Tech stack and entry points
 - Current features and what’s next
-- Requirements
 - Install and quick start
 - Usage
+- Backend (gcwserver) — run locally
 - Common commands (scripts)
 - Logging and environment variables
 - Project manifest (comic.json) and schema
+- Database, backups, and maintenance
 - Repository layout
 - Tests
 - Developer Guide (for contributors): docs/developer-guide.md
@@ -46,6 +47,7 @@ The long‑term plan is a desktop application with a canvas editor and exporters
 
 Entry points:
 - cmd/gocomicwriter/main.go — main program. Build with `-tags fyne` to include the desktop UI; without it, a stub is compiled that prints a helpful message.
+- cmd/gcwserver/main.go — thin backend server (gcwserver). Provides read-only APIs for listing projects, fetching index snapshots, search, and basic sync. See "Backend (gcwserver) — run locally" below.
 - internal/ui — UI implementation. Build-tagged variants:
   - app_fyne.go — real UI when `fyne` and cgo are enabled.
   - app_fyne_nocgo.go — helpful message when `fyne` is set but cgo is disabled.
@@ -73,6 +75,7 @@ Entry points:
 - Undo/Redo: snapshot-based undo/redo with safeguards (Edit → Undo/Redo).
 - Search panel/omnibox: instant full-text search with filters (character, scene, page range, tags); navigate to results (issue/page/panel) and highlight hits.
 - Commenting and review mode on script and pages (minimal; behind feature flag).
+- Thin backend integration (feature-flagged): File → Server → Connect to Server… shows a read-only list of projects from a gcwserver instance and allows simple snapshot text search; comic.json remains the source of truth.
 - Change tracking in script editor.
 - Documentation: Merge-friendly project format guidance and diff tips (see “Merge-friendly Project Format & Diff Tips” in docs/go_comic_writer_concept.md).
 - About menu with environment info (Go version, OS/arch, cgo/fyne status) and a Copyright dialog.
@@ -236,6 +239,14 @@ Examples:
 - PowerShell: `$env:GCW_LOG_LEVEL='debug'; go run -tags fyne ./cmd/gocomicwriter`
 - Bash: `GCW_LOG_FORMAT=json GCW_LOG_FILE=gcw.log go run -tags fyne ./cmd/gocomicwriter`
 
+## Feature flags
+The app includes a few early, opt-in features that are hidden by default and can be enabled via environment variables.
+
+- GCW_ENABLE_SERVER=true|1|on
+  - Adds a “Server” menu with “Connect to Server…”.
+  - Lets you connect to a running gcwserver backend (base URL + bearer token), list projects, and view an index snapshot per project.
+  - Read-only: no data is written to your local project; comic.json on disk remains the source of truth.
+
 ## Crash reports and autosave
 On an unexpected crash (panic), the app will:
 - write a crash report file named `crash-YYYYMMDD-HHMMSS.log` under `<project>\backups` (or the system temp dir if no project is open),
@@ -301,12 +312,80 @@ Maintenance (SQLite VACUUM/optimize):
   - After large deletions (many pages/assets removed): optionally run a full `VACUUM` or simply delete `index.sqlite` and let the app rebuild.
 - Note: These steps are informational; typical users don’t need to do anything. The app maintains the index and can always rebuild it.
 
+## Backend (gcwserver) — run locally
+
+Overview
+- A thin backend service offering read-only APIs to list projects, fetch the latest index snapshot, perform text search, and a simple op-log sync prototype. The desktop app remains file-first; the backend is optional and behind a feature flag.
+
+Requirements
+- PostgreSQL 17 or newer.
+- Optional: MinIO (S3-compatible object storage) for future asset health checks (not required for basic API usage).
+- See .env.example for all server environment variables.
+
+Quick start with Docker Compose (PostgreSQL and optional MinIO)
+- Start Postgres: `docker compose up -d postgres`
+- (Optional) Start MinIO: `docker compose up -d minio`
+- The compose file maps Postgres to localhost:5432.
+
+Run the server from source
+- Windows PowerShell:
+    - `$env:GCW_PG_DSN='postgres://postgres:postgres@localhost:5432/gocomicwriter?sslmode=disable'`
+    - `go run ./cmd/gcwserver`
+- Or build a binary:
+    - `go build -o bin\gcwserver.exe ./cmd/gcwserver`
+    - `bin\gcwserver.exe`
+- The server binds to :8080 by default. Override with `ADDR=:8080` or `PORT=8080`.
+
+Issue a token (dev mode)
+- Dev is the default auth mode. Request a token and use it as a Bearer token:
+    - `curl -s -X POST http://localhost:8080/api/auth/token -H "Content-Type: application/json" -d "{\"email\":\"dev@example.com\",\"ttl_seconds\":3600}"`
+- Response: `{ "token": "...", "subject": "dev@example.com", "expires_at": "..." }`
+
+Connect from the desktop app
+- Enable the feature flag and run the app:
+    - PowerShell: `$env:GCW_ENABLE_SERVER='1'; go run -tags fyne ./cmd/gocomicwriter`
+- In the app: Server → Connect to Server…
+    - Base URL: `http://localhost:8080`
+    - Token: paste the token obtained from /api/auth/token
+- The integration is read-only: lists projects and shows an index snapshot; search is routed to the backend. Your local comic.json remains the source of truth.
+
+Health and version endpoints
+- `GET /healthz` — liveness; responds with status and version
+- `GET /readyz` — readiness; verifies DB connectivity (and, optionally, object storage health)
+- `GET /version` — plain-text version
+
+API overview (subject to change)
+- `POST /api/auth/token` — returns `{ token, expires_at }`. In `static` auth mode this requires an admin API key header `X-API-Key: <GCW_ADMIN_API_KEY>` and the subject must exist.
+- `GET /api/projects` — list projects (Authorization: Bearer <token>)
+- `GET /api/projects/{id}/index` — latest index snapshot envelope
+- `GET /api/projects/{id}/search?text=&character=&scene=&tags=a,b&types=script,panel&page_from=1&page_to=10&limit=100&offset=0` — search
+- `POST /api/projects/{id}/sync/push` — push ops (prototype, no conflict resolution)
+- `GET /api/projects/{id}/sync/pull?since=0&limit=500` — pull ops
+
+Key environment variables (see .env.example)
+- Database: `GCW_PG_DSN` (preferred) or `DATABASE_URL`.
+- Network: `ADDR` or `PORT`.
+- TLS (optional): `GCW_TLS_ENABLE`, `GCW_TLS_CERT_FILE`, `GCW_TLS_KEY_FILE`.
+- Auth: `GCW_AUTH_MODE` (dev|static), `GCW_AUTH_SECRET`, `GCW_ADMIN_API_KEY`.
+- Object storage health (optional): `GCW_MINIO_ENDPOINT` or `GCW_OBJECT_HEALTH_URL`, `GCW_OBJECT_HEALTH_REQUIRED`.
+
+Notes
+- docker-compose.yml includes an example Postgres 17 service and an optional MinIO service. A containerized gcwserver service is provided as commented instructions within the file; adapt if you want to run the server inside Docker.
+- For production, configure TLS and switch `GCW_AUTH_MODE` to `static`, provision users, and protect token issuance with the admin API key.
+
+
 ## Repository layout
 Top‑level and key packages:
 - cmd/gocomicwriter — UI entrypoint/launcher. Build with `-tags fyne` to include the desktop UI.
+- cmd/gcwserver — backend server entrypoint (thin HTTP API over PostgreSQL).
 - internal/ — core libraries:
   - domain — core data model types (Project, Issue, Page, Panel, Balloon, etc.); mirrors fields in docs/comic.schema.json.
   - storage — project I/O (init/open/save), transactional writes, timestamped backups, autosave snapshot; see doc.go and project.go.
+  - backend — thin backend service and client:
+    - db.go — HTTP handlers, config/env, migrations loader, auth, sync routes.
+    - migrations/*.sql — PostgreSQL schema and migrations.
+    - search_pg.go — Postgres-backed search implementation.
+    - client.go — minimal Go client used by the desktop app under a feature flag.
   - log — slog setup and env configuration (GCW_LOG_*), optional rotating file handler.
   - crash — panic recovery and crash reports written to backups/.
   - version — version string helper used by the app.
@@ -319,7 +398,11 @@ Top‑level and key packages:
 - docs/ — concept and schema:
   - go_comic_writer_concept.md — product concept, pillars, architecture, milestones.
   - comic.schema.json — JSON schema for comic.json projects.
+  - ci-cd-aws.md — pipeline and release guide; aws-codepipeline.yml — CloudFormation template.
 - bin/ — local build output (e.g., gocomicwriter, gocomicwriter-ui); not published.
+- Dev helpers:
+  - docker-compose.yml — local PostgreSQL 17 and optional MinIO.
+  - .env.example — example server configuration.
 - Root files:
   - README.md, CHANGELOG.md, LICENSE, CODE_OF_CONDUCT.md, go.mod, go.sum.
 
@@ -327,6 +410,9 @@ Top‑level and key packages:
 - Run all tests: `go test ./...`
 - With coverage: `go test ./... -coverprofile=cover.out` then `go tool cover -html=cover.out`
 - Race detector (recommended): `go test -race ./...`
+- Backend integration tests: require PostgreSQL 17+ and a DSN via `GCW_PG_DSN` (preferred) or `DATABASE_URL`. The tests will connect to this database and run migrations.
+  - Example (PowerShell): `$env:GCW_PG_DSN='postgres://postgres:postgres@localhost:5432/gocomicwriter?sslmode=disable'; go test ./internal/backend -run E2E`
+  - Or start Postgres via Docker Compose: `docker compose up -d postgres`
 
 ## Roadmap and concept
 The full product concept, architecture overview, and milestone plan are maintained here:
