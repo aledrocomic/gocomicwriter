@@ -6,6 +6,27 @@ The format is based on Keep a Changelog (https://keepachangelog.com/en/1.1.0/),
 and this project adheres to Semantic Versioning. This is a pre-release
 (0.x) and APIs may change at any time.
 
+## [0.10.0-dev] - 2025-10-01
+
+### Added
+- Define minimal backend service (Go) using PostgreSQL Version 17+: schema for projects, `documents`, 
+  full-text via `tsvector`+GIN, `cross_refs`, assets metadata; migrations.
+- API endpoints: auth (token), list projects, pull index snapshot; later: push deltas and comments.
+- Desktop integration (behind feature flag): manual "Connect to Server"; read-only listing and search first; 
+  file-based `comic.json` remains the source of truth.
+- Sync prototype: append-only op-log with stable IDs; created_at/updated_at/version columns; basic push/pull over HTTPS.
+- Security/ops: optional TLS for server (GCW_TLS_ENABLE), HMAC tokens bound to per-user subject, static admin mode with X-API-Key and user upsert.
+- Health checks: /healthz (liveness) and /readyz (DB ping; optional object storage check via GCW_OBJECT_HEALTH_URL or GCW_MINIO_ENDPOINT).
+- Docker dev stack: docker-compose with PostgreSQL 17 and optional MinIO; .env.example for configuration.
+- Search API endpoint: GET /api/projects/{id}/search with Postgres tsvector + filters (types, pages, tags, character, scene).
+- Client: added Client.Search(ctx, projectID, storage.SearchQuery) returning []storage.SearchResult.
+- Tests: SQLite ↔ Postgres search parity checks and end-to-end integration tests aligned with go_comic_writer_concept.md.
+
+### Fixed
+- Workflow does not contain permissions
+- Arbitrary file access during archive extraction ("Zip Slip")
+- aws-codepipeline.yml build uses `golang: latest` and env variable `CGO_ENABLED=1`
+
 ## [0.9.0-dev] - 2025-10-01
 
 ### Added
@@ -142,5 +163,4 @@ and this project adheres to Semantic Versioning. This is a pre-release
 
 ### Known limitations
 - Not production‑ready; functionality and file formats may change without notice.
-- Rendering/lettering engine and exporters (PDF/PNG/SVG/CBZ) are not implemented yet.
 
