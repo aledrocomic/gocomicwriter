@@ -1,0 +1,61 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: gocomicwriter
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Optional object storage (S3-compatible)
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-06-13T22-53-53Z
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/ready || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Optional: run the backend in a container (requires a Dockerfile). Uncomment and adapt.
+  # gcwserver:
+  #   build: .
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     minio:
+  #       condition: service_started
+  #   environment:
+  #     # Prefer GCW_PG_DSN over DATABASE_URL in server
+  #     GCW_PG_DSN: postgres://postgres:postgres@postgres:5432/gocomicwriter?sslmode=disable
+  #     ADDR: ":8080"
+  #     GCW_TLS_ENABLE: "false"
+  #     GCW_AUTH_MODE: dev
+  #     GCW_AUTH_SECRET: dev-secret-change-me
+  #     GCW_MINIO_ENDPOINT: http://minio:9000
+  #   ports:
+  #     - "8080:8080"
+
+volumes:
+  pgdata: {}
+  minio_data: {}

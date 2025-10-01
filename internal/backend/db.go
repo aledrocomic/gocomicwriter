@@ -31,6 +31,8 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"gocomicwriter/internal/storage"
 )
 
 //go:embed migrations/*.sql
@@ -38,8 +40,29 @@ var migrationsFS embed.FS
 
 // Config holds server configuration.
 type Config struct {
-	DBURL string
-	Addr  string // http bind address, e.g., ":8080"
+	DBURL           string
+	Addr            string // http bind address, e.g., ":8080"
+	TLSEnable       bool
+	TLSCertFile     string
+	TLSKeyFile      string
+	AuthMode        string // dev | static
+	AdminAPIKey     string
+	ObjectHealthURL string // e.g., http://minio:9000/minio/health/ready
+	ObjectHealthReq bool   // if true, failing object health makes readyz fail
+}
+
+func getenvBool(name string, def bool) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	if v == "" {
+		return def
+	}
+	switch v {
+	case "1", "true", "yes", "y", "on":
+		return true
+	case "0", "false", "no", "n", "off":
+		return false
+	}
+	return def
 }
 
 func loadConfig() Config {
@@ -56,6 +79,28 @@ func loadConfig() Config {
 	if v := os.Getenv("ADDR"); v != "" {
 		cfg.Addr = v
 	}
+	// TLS/env auth/object config
+	cfg.TLSEnable = getenvBool("GCW_TLS_ENABLE", false)
+	cfg.TLSCertFile = os.Getenv("GCW_TLS_CERT_FILE")
+	cfg.TLSKeyFile = os.Getenv("GCW_TLS_KEY_FILE")
+	cfg.AuthMode = strings.ToLower(strings.TrimSpace(os.Getenv("GCW_AUTH_MODE")))
+	if cfg.AuthMode == "" {
+		cfg.AuthMode = "dev"
+	}
+	cfg.AdminAPIKey = os.Getenv("GCW_ADMIN_API_KEY")
+	cfg.ObjectHealthURL = os.Getenv("GCW_OBJECT_HEALTH_URL")
+	if cfg.ObjectHealthURL == "" {
+		if ep := os.Getenv("GCW_MINIO_ENDPOINT"); ep != "" {
+			// assume http unless scheme provided
+			if strings.HasPrefix(ep, "http://") || strings.HasPrefix(ep, "https://") {
+				cfg.ObjectHealthURL = strings.TrimRight(ep, "/") + "/minio/health/ready"
+			} else {
+				cfg.ObjectHealthURL = "http://" + strings.TrimRight(ep, "/") + "/minio/health/ready"
+			}
+		}
+	}
+	cfg.ObjectHealthReq = getenvBool("GCW_OBJECT_HEALTH_REQUIRED", false)
+
 	if cfg.DBURL == "" {
 		// Reasonable local default; requires a DB set up by the developer
 		cfg.DBURL = "postgres://postgres:postgres@localhost:5432/gocomicwriter?sslmode=disable"
@@ -90,19 +135,54 @@ func Start() error {
 	mux := http.NewServeMux()
 	// Health endpoints
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":  "ok",
+			"version": getVersion(),
+			"time":    time.Now().UTC().Format(time.RFC3339),
+		})
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
+		status := "ready"
+		dbOK := true
+		objOK := true
 		if err := db.PingContext(ctx); err != nil {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte("db not ready"))
-			return
+			dbOK = false
+			status = "degraded"
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ready"))
+		if cfg.ObjectHealthURL != "" {
+			client := &http.Client{Timeout: 2 * time.Second}
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.ObjectHealthURL, nil)
+			if err != nil {
+				objOK = false
+				if cfg.ObjectHealthReq {
+					status = "not_ready"
+				}
+			} else {
+				resp, err := client.Do(req)
+				if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+					objOK = false
+					if cfg.ObjectHealthReq {
+						status = "not_ready"
+					}
+				}
+				if resp != nil && resp.Body != nil {
+					_ = resp.Body.Close()
+				}
+			}
+		}
+		code := http.StatusOK
+		if !dbOK || (cfg.ObjectHealthReq && !objOK) {
+			code = http.StatusServiceUnavailable
+		}
+		writeJSON(w, code, map[string]any{
+			"status":  status,
+			"db":      dbOK,
+			"objects": objOK,
+			"version": getVersion(),
+			"time":    time.Now().UTC().Format(time.RFC3339),
+		})
 	})
 	mux.HandleFunc("/version", func(w http.ResponseWriter, r *http.Request) {
 		ver := getVersion()
@@ -124,40 +204,103 @@ func Start() error {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		// Optional JSON body: { "subject": "name", "ttl_seconds": 3600 }
+		// JSON body: { "email": "user@example.com", "display_name": "User", "subject": "alias", "ttl_seconds": 3600 }
 		var req struct {
-			Subject    string `json:"subject"`
-			TTLSeconds int64  `json:"ttl_seconds"`
+			Subject     string `json:"subject"`
+			Email       string `json:"email"`
+			DisplayName string `json:"display_name"`
+			TTLSeconds  int64  `json:"ttl_seconds"`
 		}
-		b, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		b, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
+			return
+		}
 		_ = r.Body.Close()
-		_ = json.Unmarshal(b, &req)
-		if req.Subject == "" {
-			req.Subject = "dev"
+		if err := json.Unmarshal(b, &req); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("invalid json"))
+			return
+		}
+		sub := strings.TrimSpace(req.Email)
+		if sub == "" {
+			sub = strings.TrimSpace(req.Subject)
 		}
 		if req.TTLSeconds <= 0 || req.TTLSeconds > 24*3600 {
 			req.TTLSeconds = 3600
 		}
+		if cfg.AuthMode == "static" {
+			if cfg.AdminAPIKey == "" || r.Header.Get("X-API-Key") != cfg.AdminAPIKey {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte("unauthorized"))
+				return
+			}
+			if sub == "" {
+				writeError(w, http.StatusBadRequest, fmt.Errorf("subject/email required"))
+				return
+			}
+			// ensure user exists or upsert display_name
+			if _, err := db.ExecContext(r.Context(), `INSERT INTO users(email, display_name) VALUES ($1, NULLIF($2,'') )
+				ON CONFLICT (email) DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, users.display_name)`, sub, req.DisplayName); err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		if sub == "" {
+			sub = "dev"
+		}
 		exp := time.Now().Add(time.Duration(req.TTLSeconds) * time.Second)
-		tok, err := signToken(secret, req.Subject, exp)
+		tok, err := signToken(secret, sub, exp)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"token":      tok,
+			"subject":    sub,
 			"expires_at": exp.UTC().Format(time.RFC3339),
 		})
 	})
 
+	// Auth wrapper verifying token and (in static mode) user existence
+	authWrap := func(next func(w http.ResponseWriter, r *http.Request, sub string)) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			auth := r.Header.Get("Authorization")
+			const prefix = "Bearer "
+			if !strings.HasPrefix(strings.ToLower(auth), strings.ToLower(prefix)) {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte("missing bearer token"))
+				return
+			}
+			token := strings.TrimSpace(auth[len(prefix):])
+			sub, err := verifyToken(secret, token)
+			if err != nil {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte("invalid token"))
+				return
+			}
+			if cfg.AuthMode == "static" {
+				var x int
+				if err := db.QueryRowContext(r.Context(), `SELECT 1 FROM users WHERE email = $1`, sub).Scan(&x); err != nil {
+					if errors.Is(err, sql.ErrNoRows) {
+						w.WriteHeader(http.StatusForbidden)
+						_, _ = w.Write([]byte("user not allowed"))
+						return
+					}
+					writeError(w, http.StatusInternalServerError, err)
+					return
+				}
+			}
+			next(w, r, sub)
+		}
+	}
 	// GET /api/projects (auth required)
-	mux.HandleFunc("/api/projects", withAuth(secret, func(w http.ResponseWriter, r *http.Request, sub string) {
+	mux.HandleFunc("/api/projects", authWrap(func(w http.ResponseWriter, r *http.Request, sub string) {
 		rows, err := db.QueryContext(r.Context(), `SELECT id, stable_id, name, updated_at, version FROM projects ORDER BY updated_at DESC`)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		type proj struct {
 			ID        int64     `json:"id"`
 			StableID  string    `json:"stable_id"`
@@ -181,15 +324,10 @@ func Start() error {
 		writeJSON(w, http.StatusOK, list)
 	}))
 
-	// GET /api/projects/{id}/index (auth required)
-	mux.HandleFunc("/api/projects/", withAuth(secret, func(w http.ResponseWriter, r *http.Request, sub string) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		// Expect path: /api/projects/{id}/index
+	// Project-scoped endpoints (auth required): index snapshot, sync push/pull
+	mux.HandleFunc("/api/projects/", authWrap(func(w http.ResponseWriter, r *http.Request, sub string) {
 		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-		if len(parts) != 4 || parts[0] != "api" || parts[1] != "projects" || parts[3] != "index" {
+		if len(parts) < 4 || parts[0] != "api" || parts[1] != "projects" {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -198,47 +336,259 @@ func Start() error {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("invalid project id"))
 			return
 		}
-		var (
-			version int64
-			snap    []byte
-			created time.Time
-		)
-		row := db.QueryRowContext(r.Context(), `SELECT version, snapshot, created_at FROM index_snapshots WHERE project_id = $1 ORDER BY version DESC, id DESC LIMIT 1`, pid)
-		switch err := row.Scan(&version, &snap, &created); err {
-		case sql.ErrNoRows:
-			writeError(w, http.StatusNotFound, fmt.Errorf("no snapshot"))
-			return
-		case nil:
-			// ok
-		default:
-			writeError(w, http.StatusInternalServerError, err)
+		// /api/projects/{id}/index (GET)
+		if len(parts) == 4 && parts[3] == "index" {
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			var (
+				version int64
+				snap    []byte
+				created time.Time
+			)
+			row := db.QueryRowContext(r.Context(), `SELECT version, snapshot, created_at FROM index_snapshots WHERE project_id = $1 ORDER BY version DESC, id DESC LIMIT 1`, pid)
+			switch err := row.Scan(&version, &snap, &created); err {
+			case sql.ErrNoRows:
+				writeError(w, http.StatusNotFound, fmt.Errorf("no snapshot"))
+				return
+			case nil:
+				// ok
+			default:
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			var raw any
+			if err := json.Unmarshal(snap, &raw); err != nil {
+				raw = json.RawMessage(snap)
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"project_id": pid,
+				"version":    version,
+				"created_at": created.UTC().Format(time.RFC3339),
+				"snapshot":   raw,
+			})
 			return
 		}
-		// snapshot stored as JSONB; deliver it back as JSON inside envelope
-		var raw any
-		if err := json.Unmarshal(snap, &raw); err != nil {
-			// If not valid JSON, return raw string
-			raw = json.RawMessage(snap)
+		// /api/projects/{id}/search (GET)
+		if len(parts) == 4 && parts[3] == "search" {
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			// Parse query params into storage.SearchQuery
+			typList := []string{}
+			if v := r.URL.Query().Get("types"); v != "" {
+				for _, s := range strings.Split(v, ",") {
+					s = strings.TrimSpace(s)
+					if s != "" {
+						typList = append(typList, s)
+					}
+				}
+			}
+			tagList := []string{}
+			if v := r.URL.Query().Get("tags"); v != "" {
+				for _, s := range strings.Split(v, ",") {
+					s = strings.TrimSpace(s)
+					if s != "" {
+						tagList = append(tagList, s)
+					}
+				}
+			}
+			q := storage.SearchQuery{
+				Text:      r.URL.Query().Get("text"),
+				Character: r.URL.Query().Get("character"),
+				Scene:     r.URL.Query().Get("scene"),
+				Tags:      tagList,
+				Types:     typList,
+			}
+			if v := r.URL.Query().Get("page_from"); v != "" {
+				if n, err := strconv.Atoi(v); err == nil {
+					q.PageFrom = n
+				}
+			}
+			if v := r.URL.Query().Get("page_to"); v != "" {
+				if n, err := strconv.Atoi(v); err == nil {
+					q.PageTo = n
+				}
+			}
+			if v := r.URL.Query().Get("limit"); v != "" {
+				if n, err := strconv.Atoi(v); err == nil {
+					q.Limit = n
+				}
+			}
+			if v := r.URL.Query().Get("offset"); v != "" {
+				if n, err := strconv.Atoi(v); err == nil {
+					q.Offset = n
+				}
+			}
+			res, err := SearchPG(r.Context(), db, pid, q)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, res)
+			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"project_id": pid,
-			"version":    version,
-			"created_at": created.UTC().Format(time.RFC3339),
-			"snapshot":   raw,
-		})
+		// /api/projects/{id}/sync/push (POST) and /sync/pull (GET)
+		if len(parts) == 5 && parts[3] == "sync" {
+			switch parts[4] {
+			case "push":
+				if r.Method != http.MethodPost {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				var req struct {
+					ClientVersion int64 `json:"client_version"`
+					Ops           []struct {
+						OpID       string          `json:"op_id"`
+						OpType     string          `json:"op_type"`
+						EntityType string          `json:"entity_type"`
+						EntityID   string          `json:"entity_id"`
+						Payload    json.RawMessage `json:"payload"`
+					} `json:"ops"`
+				}
+				b, err := io.ReadAll(io.LimitReader(r.Body, 10<<20))
+				if err != nil {
+					writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
+					return
+				}
+				_ = r.Body.Close()
+				if err := json.Unmarshal(b, &req); err != nil {
+					writeError(w, http.StatusBadRequest, fmt.Errorf("invalid json: %v", err))
+					return
+				}
+				ctx := r.Context()
+				tx, err := db.BeginTx(ctx, &sql.TxOptions{})
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, err)
+					return
+				}
+				defer func() { _ = tx.Rollback() }()
+				var curVersion int64
+				row := tx.QueryRowContext(ctx, `SELECT version FROM projects WHERE id = $1 FOR UPDATE`, pid)
+				if err := row.Scan(&curVersion); err != nil {
+					if errors.Is(err, sql.ErrNoRows) {
+						writeError(w, http.StatusNotFound, fmt.Errorf("project not found"))
+						return
+					}
+					writeError(w, http.StatusInternalServerError, err)
+					return
+				}
+				newVersion := curVersion
+				for i, op := range req.Ops {
+					newVersion = curVersion + int64(i+1)
+					if op.Payload == nil || len(op.Payload) == 0 {
+						op.Payload = json.RawMessage("{}")
+					}
+					if _, err := tx.ExecContext(ctx, `INSERT INTO sync_ops (op_id, project_id, version, actor, op_type, entity_type, entity_id, payload) VALUES (COALESCE(NULLIF($1, '')::uuid, gen_random_uuid()),$2,$3,$4,$5,$6,$7,$8)`,
+						op.OpID, pid, newVersion, sub, op.OpType, op.EntityType, op.EntityID, op.Payload); err != nil {
+						writeError(w, http.StatusInternalServerError, err)
+						return
+					}
+				}
+				if _, err := tx.ExecContext(ctx, `UPDATE projects SET version = $1 WHERE id = $2`, newVersion, pid); err != nil {
+					writeError(w, http.StatusInternalServerError, err)
+					return
+				}
+				if err := tx.Commit(); err != nil {
+					writeError(w, http.StatusInternalServerError, err)
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{
+					"project_id":     pid,
+					"server_version": newVersion,
+					"accepted":       len(req.Ops),
+				})
+				return
+			case "pull":
+				if r.Method != http.MethodGet {
+					w.WriteHeader(http.StatusMethodNotAllowed)
+					return
+				}
+				q := r.URL.Query()
+				sinceStr := q.Get("since")
+				var since int64
+				if sinceStr != "" {
+					var err error
+					since, err = strconv.ParseInt(sinceStr, 10, 64)
+					if err != nil || since < 0 {
+						writeError(w, http.StatusBadRequest, fmt.Errorf("invalid since"))
+						return
+					}
+				}
+				limit := 500
+				if ls := q.Get("limit"); ls != "" {
+					if v, err := strconv.Atoi(ls); err == nil && v > 0 {
+						if v > 5000 {
+							v = 5000
+						}
+						limit = v
+					}
+				}
+				ctx := r.Context()
+				var serverVersion int64
+				if err := db.QueryRowContext(ctx, `SELECT version FROM projects WHERE id = $1`, pid).Scan(&serverVersion); err != nil {
+					if errors.Is(err, sql.ErrNoRows) {
+						writeError(w, http.StatusNotFound, fmt.Errorf("project not found"))
+						return
+					}
+					writeError(w, http.StatusInternalServerError, err)
+					return
+				}
+				rows, err := db.QueryContext(ctx, `SELECT op_id, version, actor, op_type, entity_type, entity_id, payload, created_at FROM sync_ops WHERE project_id = $1 AND version > $2 ORDER BY version ASC LIMIT $3`, pid, since, limit)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, err)
+					return
+				}
+				defer rows.Close()
+				type op struct {
+					OpID       string          `json:"op_id"`
+					Version    int64           `json:"version"`
+					Actor      string          `json:"actor"`
+					OpType     string          `json:"op_type"`
+					EntityType string          `json:"entity_type"`
+					EntityID   string          `json:"entity_id"`
+					Payload    json.RawMessage `json:"payload"`
+					CreatedAt  time.Time       `json:"created_at"`
+				}
+				var ops []op
+				for rows.Next() {
+					var o op
+					if err := rows.Scan(&o.OpID, &o.Version, &o.Actor, &o.OpType, &o.EntityType, &o.EntityID, &o.Payload, &o.CreatedAt); err != nil {
+						writeError(w, http.StatusInternalServerError, err)
+						return
+					}
+					ops = append(ops, o)
+				}
+				if err := rows.Err(); err != nil {
+					writeError(w, http.StatusInternalServerError, err)
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{
+					"project_id":     pid,
+					"server_version": serverVersion,
+					"ops":            ops,
+				})
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("not found"))
 	}))
 
-	// Placeholders for future endpoints
-	mux.HandleFunc("/api/projects/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/deltas") || strings.HasSuffix(r.URL.Path, "/comments") {
-			w.WriteHeader(http.StatusNotImplemented)
-			_, _ = w.Write([]byte("not implemented yet"))
-			return
+	server := &http.Server{
+		Addr:    cfg.Addr,
+		Handler: mux,
+	}
+	log.Printf("gcwserver listening on %s tls=%v mode=%s", cfg.Addr, cfg.TLSEnable, cfg.AuthMode)
+	if cfg.TLSEnable {
+		if cfg.TLSCertFile == "" || cfg.TLSKeyFile == "" {
+			return fmt.Errorf("TLS enabled but GCW_TLS_CERT_FILE or GCW_TLS_KEY_FILE not set")
 		}
-	})
-
-	log.Printf("gcwserver listening on %s", cfg.Addr)
-	return http.ListenAndServe(cfg.Addr, mux)
+		return server.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile)
+	}
+	return server.ListenAndServe()
 }
 
 func getVersion() string {

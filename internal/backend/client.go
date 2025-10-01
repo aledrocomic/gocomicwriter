@@ -11,6 +11,7 @@
 package backend
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,6 +19,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"gocomicwriter/internal/storage"
 )
 
 // Client is a minimal HTTP client for the thin backend API.
@@ -54,9 +57,45 @@ func (c *Client) doJSON(ctx context.Context, method, path string, dest any) erro
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("server %s %s: %s", method, u.Path, resp.Status)
+	}
+	dec := json.NewDecoder(resp.Body)
+	dec.UseNumber()
+	return dec.Decode(dest)
+}
+
+func (c *Client) doJSONWithBody(ctx context.Context, method, path string, body any, dest any) error {
+	u, err := url.Parse(c.BaseURL + path)
+	if err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	if body != nil {
+		enc := json.NewEncoder(&buf)
+		if err := enc.Encode(body); err != nil {
+			return err
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), &buf)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("server %s %s: %s", method, u.Path, resp.Status)
+	}
+	if dest == nil {
+		return nil
 	}
 	dec := json.NewDecoder(resp.Body)
 	dec.UseNumber()
@@ -97,4 +136,102 @@ func (c *Client) GetIndexSnapshot(ctx context.Context, projectID int64) (*IndexS
 		return nil, err
 	}
 	return &env, nil
+}
+
+// Sync types
+type SyncOp struct {
+	OpID       string          `json:"op_id"`
+	Version    int64           `json:"version"`
+	Actor      string          `json:"actor"`
+	OpType     string          `json:"op_type"`
+	EntityType string          `json:"entity_type"`
+	EntityID   string          `json:"entity_id"`
+	Payload    json.RawMessage `json:"payload"`
+	CreatedAt  time.Time       `json:"created_at"`
+}
+
+type SyncOpInput struct {
+	OpID       string          `json:"op_id,omitempty"`
+	OpType     string          `json:"op_type"`
+	EntityType string          `json:"entity_type"`
+	EntityID   string          `json:"entity_id"`
+	Payload    json.RawMessage `json:"payload,omitempty"`
+}
+
+type PushResult struct {
+	ProjectID     int64 `json:"project_id"`
+	ServerVersion int64 `json:"server_version"`
+	Accepted      int   `json:"accepted"`
+}
+
+type PullResult struct {
+	ProjectID     int64    `json:"project_id"`
+	ServerVersion int64    `json:"server_version"`
+	Ops           []SyncOp `json:"ops"`
+}
+
+// PushOps pushes a batch of ops to the server (no conflict resolution).
+func (c *Client) PushOps(ctx context.Context, projectID int64, clientVersion int64, ops []SyncOpInput) (*PushResult, error) {
+	req := struct {
+		ClientVersion int64         `json:"client_version"`
+		Ops           []SyncOpInput `json:"ops"`
+	}{ClientVersion: clientVersion, Ops: ops}
+	var res PushResult
+	path := fmt.Sprintf("/api/projects/%d/sync/push", projectID)
+	if err := c.doJSONWithBody(ctx, http.MethodPost, path, req, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+// PullOps pulls ops since a given version.
+func (c *Client) PullOps(ctx context.Context, projectID int64, since int64, limit int) (*PullResult, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	path := fmt.Sprintf("/api/projects/%d/sync/pull?since=%d&limit=%d", projectID, since, limit)
+	var res PullResult
+	if err := c.doJSON(ctx, http.MethodGet, path, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+// Search issues a search request to the backend for a given project using parameters compatible
+// with storage.SearchQuery and returns a slice of storage.SearchResult.
+func (c *Client) Search(ctx context.Context, projectID int64, q storage.SearchQuery) ([]storage.SearchResult, error) {
+	values := url.Values{}
+	if s := strings.TrimSpace(q.Text); s != "" {
+		values.Set("text", s)
+	}
+	if s := strings.TrimSpace(q.Character); s != "" {
+		values.Set("character", s)
+	}
+	if s := strings.TrimSpace(q.Scene); s != "" {
+		values.Set("scene", s)
+	}
+	if len(q.Types) > 0 {
+		values.Set("types", strings.Join(q.Types, ","))
+	}
+	if len(q.Tags) > 0 {
+		values.Set("tags", strings.Join(q.Tags, ","))
+	}
+	if q.PageFrom > 0 {
+		values.Set("page_from", fmt.Sprintf("%d", q.PageFrom))
+	}
+	if q.PageTo > 0 {
+		values.Set("page_to", fmt.Sprintf("%d", q.PageTo))
+	}
+	if q.Limit > 0 {
+		values.Set("limit", fmt.Sprintf("%d", q.Limit))
+	}
+	if q.Offset > 0 {
+		values.Set("offset", fmt.Sprintf("%d", q.Offset))
+	}
+	path := fmt.Sprintf("/api/projects/%d/search?%s", projectID, values.Encode())
+	var res []storage.SearchResult
+	if err := c.doJSON(ctx, http.MethodGet, path, &res); err != nil {
+		return nil, err
+	}
+	return res, nil
 }

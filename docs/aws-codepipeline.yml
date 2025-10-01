@@ -207,7 +207,7 @@ Resources:
           phases:
             install:
               runtime-versions:
-                golang: 1.24
+                golang: latest
             pre_build:
               commands:
                 - go version
@@ -223,9 +223,9 @@ Resources:
               commands:
                 - mkdir -p "$ARTIFACT_DIR"
                 - echo "Building UI (fyne tag) for linux/amd64 (nocgo stub in CI)..."
-                - GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags fyne -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/gocomicwriter-ui-linux-amd64" ./cmd/gocomicwriter
+                - GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -tags fyne -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/gocomicwriter-ui-linux-amd64" ./cmd/gocomicwriter
                 - echo "Building UI (fyne tag) for windows/amd64 (nocgo stub in CI)..."
-                - GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -tags fyne -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/gocomicwriter-ui-windows-amd64.exe" ./cmd/gocomicwriter
+                - GOOS=windows GOARCH=amd64 CGO_ENABLED=1 go build -tags fyne -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/gocomicwriter-ui-windows-amd64.exe" ./cmd/gocomicwriter
             post_build:
               commands:
                 - |

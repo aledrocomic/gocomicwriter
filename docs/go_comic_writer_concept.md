@@ -283,9 +283,9 @@ Alignment with Definition of Done:
 - [✓] Define minimal backend service (Go) using PostgreSQL Version 17+: schema for projects, `documents`, full-text via `tsvector`+GIN, `cross_refs`, assets metadata; migrations.
 - [✓] API endpoints: auth (token), list projects, pull index snapshot; later: push deltas and comments.
 - [✓] Desktop integration (behind feature flag): manual "Connect to Server"; read-only listing and search first; file-based `comic.json` remains the source of truth.
-- [ ] Sync prototype: op-log format and stable IDs; `created_at/updated_at/version` columns; basic push/pull over HTTPS (no conflict resolution yet).
-- [ ] Security/ops: TLS, per-user auth, Docker dev stack (Postgres + MinIO optional), config via env; health checks.
-- [ ] Tests: parity checks for search between SQLite and Postgres; end-to-end integration tests.
+- [✓] Sync prototype: op-log format and stable IDs; `created_at/updated_at/version` columns; basic push/pull over HTTPS (no conflict resolution yet).
+- [✓] Security/ops: TLS, per-user auth, Docker dev stack (Postgres + MinIO optional), config via env; health checks.
+- [✓] Tests: parity checks for search between SQLite and Postgres; end-to-end integration tests.
 
 ### Phase 8 — Packaging & Distribution
 - [ ] Cross-platform builds and installers.
