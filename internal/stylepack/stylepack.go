@@ -145,18 +145,33 @@ func InstallPack(projectRoot string, packZipPath string) (int, error) {
 			targetRel = filepath.ToSlash(filepath.Join("styles", targetRel))
 		}
 		targetPath := filepath.Join(projectRoot, filepath.FromSlash(targetRel))
+		// Security: Prevent Zip Slip by rejecting entries with "..", absolute paths, or those resolving outside <projectRoot>/styles
+		absTargetPath, err := filepath.Abs(targetPath)
+		if err != nil {
+			l.Warn("failed to resolve absolute path", slog.String("path", targetPath), slog.String("error", err.Error()))
+			continue
+		}
+		stylesDir, err := filepath.Abs(filepath.Join(projectRoot, "styles"))
+		if err != nil {
+			l.Warn("failed to resolve absolute styles dir", slog.String("error", err.Error()))
+			continue
+		}
+		if strings.Contains(name, "..") || filepath.IsAbs(name) || !strings.HasPrefix(absTargetPath, stylesDir) {
+			l.Warn("skip suspicious file (potential ZipSlip)", slog.String("entry", name), slog.String("path", absTargetPath))
+			continue
+		}
 		// If file exists, skip
-		if _, err := os.Stat(targetPath); err == nil {
-			l.Warn("skip existing file", slog.String("path", targetPath))
+		if _, err := os.Stat(absTargetPath); err == nil {
+			l.Warn("skip existing file", slog.String("path", absTargetPath))
 			continue
 		}
 		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(targetPath, 0o755); err != nil {
+			if err := os.MkdirAll(absTargetPath, 0o755); err != nil {
 				return installed, err
 			}
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(absTargetPath), 0o755); err != nil {
 			return installed, err
 		}
 		rc, err := f.Open()
