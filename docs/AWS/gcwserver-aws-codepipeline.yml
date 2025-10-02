@@ -1,0 +1,548 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  CI/CD pipeline for gcwserver (Go Comic Writer backend) using AWS CodePipeline,
+  CodeBuild, and CodeDeploy for EC2/On-Prem in eu-west-1. This stack does NOT
+  provision RDS. Instead, a PostgreSQL connection string is provided as a
+  parameter and stored in SSM Parameter Store for the instance to read during
+  deployment.
+
+Metadata:
+  Notes: |
+    Requirements and assumptions:
+      - Deploy this stack in eu-west-1.
+      - Your EC2 instance(s) are already launched, have the CodeDeploy agent installed,
+        and are tagged to match EC2TagKey/EC2TagValue.
+      - The EC2 instance role allows:
+          * s3:GetObject on this stack's artifact bucket
+          * ssm:GetParameter (and optionally with decryption)
+      - No RDS resources are created by this template.
+      - CodePipeline source uses a GitHub CodeStar connection (create it beforehand).
+      - CodeBuild creates a deployment bundle including appspec.yml and install scripts.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: gcwserver
+    Description: Logical project name used for resources.
+
+  PipelineName:
+    Type: String
+    Default: gcwserver-pipeline
+    Description: Name of the CodePipeline to create.
+
+  GitHubConnectionArn:
+    Type: String
+    Description: ARN of an existing CodeStar connection to GitHub (arn:aws:codestar-connections:eu-west-1:<account-id>:connection/<id>)
+
+  GitHubOwner:
+    Type: String
+    Description: GitHub repository owner (user or org), e.g., alexa
+
+  GitHubRepo:
+    Type: String
+    Description: GitHub repository name, e.g., gocomicwriter
+
+  BranchName:
+    Type: String
+    Default: master
+    Description: Branch to track for deployments.
+
+  EC2TagKey:
+    Type: String
+    Default: role
+    Description: EC2 tag key used by CodeDeploy DeploymentGroup to select instances.
+
+  EC2TagValue:
+    Type: String
+    Default: gcwserver
+    Description: EC2 tag value used by CodeDeploy DeploymentGroup to select instances.
+
+  # Database connection string (no RDS is created)
+  ConnectionString:
+    Type: String
+    NoEcho: true
+    Description: PostgreSQL connection string (DSN), e.g., postgres://user:pass@host:5432/db?sslmode=require
+
+  # Base path in SSM Parameter Store under which values will be written
+  SSMParamPath:
+    Type: String
+    Default: /gcwserver
+    Description: Base path for SSM parameters (e.g., /gcwserver). Final names will be <base>/<name>.
+
+  # Optional server settings
+  Addr:
+    Type: String
+    Default: 127.0.0.1:8080
+    Description: Server bind address (ADDR). If empty, defaults to :8080 inside the app.
+
+  AuthMode:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, static]
+    Description: Authentication mode for gcwserver.
+
+  AdminApiKey:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Optional admin API key (required header X-API-Key for /api/auth/token in static mode). Leave empty to skip.
+
+  AuthSecret:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Optional token signing secret. Leave empty to skip.
+
+  BuildImage:
+    Type: String
+    Default: aws/codebuild/standard:7.0
+    Description: CodeBuild container image.
+
+  ComputeType:
+    Type: String
+    Default: BUILD_GENERAL1_SMALL
+    AllowedValues: [BUILD_GENERAL1_SMALL, BUILD_GENERAL1_MEDIUM, BUILD_GENERAL1_LARGE, BUILD_GENERAL1_XLARGE]
+    Description: CodeBuild compute type.
+
+Conditions:
+  HasAdminApiKey: !Not [!Equals [!Ref AdminApiKey, '']]
+  HasAuthSecret: !Not [!Equals [!Ref AuthSecret, '']]
+  HasAddr: !Not [!Equals [!Ref Addr, '']]
+
+Resources:
+  PipelineArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-codepipeline-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Path: '/'
+      Policies:
+        - PolicyName: codepipeline-inline
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: S3Artifacts
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:AbortMultipartUpload
+                  - s3:ListBucket
+                Resource:
+                  - !Sub ${PipelineArtifactBucket.Arn}
+                  - !Sub ${PipelineArtifactBucket.Arn}/*
+              - Sid: CodeBuildRun
+                Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: '*'
+              - Sid: CodeDeployPermissions
+                Effect: Allow
+                Action:
+                  - codedeploy:CreateDeployment
+                  - codedeploy:Get* 
+                  - codedeploy:List*
+                Resource: '*'
+              - Sid: UseConnection
+                Effect: Allow
+                Action:
+                  - codestar-connections:UseConnection
+                Resource: !Ref GitHubConnectionArn
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-codebuild-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Path: '/'
+      Policies:
+        - PolicyName: codebuild-logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+        - PolicyName: codebuild-artifacts-s3
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AllowReadWriteArtifactsBucketObjects
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource: !Sub ${PipelineArtifactBucket.Arn}/*
+              - Sid: AllowListArtifactsBucket
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource: !Sub ${PipelineArtifactBucket.Arn}
+
+  # Store parameters in SSM for the instance to read during deployment
+  SSMDbDsn:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub ${SSMParamPath}/db_dsn
+      Type: String
+      Value: !Ref ConnectionString
+      Description: PostgreSQL connection string (DSN) for gcwserver.
+
+  SSMAddr:
+    Type: AWS::SSM::Parameter
+    Condition: HasAddr
+    Properties:
+      Name: !Sub ${SSMParamPath}/addr
+      Type: String
+      Value: !Ref Addr
+      Description: Bind address for gcwserver.
+
+  SSMAuthMode:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub ${SSMParamPath}/auth_mode
+      Type: String
+      Value: !Ref AuthMode
+      Description: Authentication mode for gcwserver.
+
+  SSMAdminApiKey:
+    Type: AWS::SSM::Parameter
+    Condition: HasAdminApiKey
+    Properties:
+      Name: !Sub ${SSMParamPath}/admin_api_key
+      Type: String
+      Value: !Ref AdminApiKey
+      Description: Admin API key for gcwserver.
+
+  SSMAuthSecret:
+    Type: AWS::SSM::Parameter
+    Condition: HasAuthSecret
+    Properties:
+      Name: !Sub ${SSMParamPath}/auth_secret
+      Type: String
+      Value: !Ref AuthSecret
+      Description: Token signing secret for gcwserver.
+
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${ProjectName}-build
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: !Ref ComputeType
+        Image: !Ref BuildImage
+        PrivilegedMode: false
+        EnvironmentVariables:
+          - Name: ARTIFACT_DIR
+            Type: PLAINTEXT
+            Value: dist
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          env:
+            variables:
+              ARTIFACT_DIR: dist
+          phases:
+            install:
+              runtime-versions:
+                golang: latest
+            pre_build:
+              commands:
+                - go version
+                - go mod download
+                - go vet ./...
+                - echo "Checking formatting..."
+                - |
+                  DIFF=$(gofmt -s -l .)
+                  if [ -n "$DIFF" ]; then
+                    echo "Files need gofmt:" && echo "$DIFF" && exit 1
+                  fi
+            build:
+              commands:
+                - mkdir -p "$ARTIFACT_DIR" "$ARTIFACT_DIR/scripts" "$ARTIFACT_DIR/files"
+                - echo "Building gcwserver for linux/amd64..."
+                - GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o "$ARTIFACT_DIR/files/gcwserver" ./cmd/gcwserver
+                - echo "Creating appspec.yml and lifecycle scripts..."
+                - |
+                  cat > "$ARTIFACT_DIR/appspec.yml" <<'APP'
+                  version: 0.0
+                  os: linux
+                  files:
+                    - source: files/gcwserver
+                      destination: /opt/gcwserver/bin
+                      overwrite: true
+                  permissions:
+                    - object: /opt/gcwserver/bin/gcwserver
+                      mode: '0755'
+                      owner: gcw
+                      group: gcw
+                  hooks:
+                    ApplicationStop:
+                      - location: scripts/stop.sh
+                        timeout: 60
+                        runas: root
+                    BeforeInstall:
+                      - location: scripts/before_install.sh
+                        timeout: 300
+                        runas: root
+                    AfterInstall:
+                      - location: scripts/install.sh
+                        timeout: 600
+                        runas: root
+                    ApplicationStart:
+                      - location: scripts/start.sh
+                        timeout: 120
+                        runas: root
+                    ValidateService:
+                      - location: scripts/validate.sh
+                        timeout: 120
+                        runas: root
+                  APP
+                - |
+                  cat > "$ARTIFACT_DIR/scripts/before_install.sh" <<'SH'
+                  #!/usr/bin/env bash
+                  set -euo pipefail
+                  id -u gcw &>/dev/null || useradd --system --home /opt/gcwserver --shell /usr/sbin/nologin gcw
+                  mkdir -p /opt/gcwserver/bin /opt/gcwserver/var /opt/gcwserver/log
+                  chown -R gcw:gcw /opt/gcwserver
+                  # Ensure awscli is available (Debian/Ubuntu)
+                  if ! command -v aws >/dev/null 2>&1; then
+                    apt-get update -y && apt-get install -y awscli jq || true
+                  fi
+                  SH
+                - |
+                  cat > "$ARTIFACT_DIR/scripts/install.sh" <<'SH'
+                  #!/usr/bin/env bash
+                  set -euo pipefail
+                  BASE_PATH="${SSMParamPath:-/gcwserver}"
+                  # Fetch parameters from SSM (if available)
+                  get_param() {
+                    local name="$1"
+                    if command -v aws >/dev/null 2>&1; then
+                      aws ssm get-parameter --name "$name" --with-decryption --query Parameter.Value --output text 2>/dev/null || true
+                    fi
+                  }
+                  DSN=$(get_param "$BASE_PATH/db_dsn")
+                  ADDR=$(get_param "$BASE_PATH/addr")
+                  AUTH_MODE=$(get_param "$BASE_PATH/auth_mode")
+                  ADMIN_API_KEY=$(get_param "$BASE_PATH/admin_api_key")
+                  AUTH_SECRET=$(get_param "$BASE_PATH/auth_secret")
+
+                  # Write env file
+                  ENVF="/etc/gcwserver.env"
+                  umask 077
+                  {
+                    echo "# Generated by CodeDeploy on $(date -Is)"
+                    if [ -n "$DSN" ]; then echo "GCW_PG_DSN=$DSN"; fi
+                    if [ -n "$ADDR" ]; then echo "ADDR=$ADDR"; fi
+                    if [ -n "$AUTH_MODE" ]; then echo "GCW_AUTH_MODE=$AUTH_MODE"; fi
+                    if [ -n "$ADMIN_API_KEY" ]; then echo "GCW_ADMIN_API_KEY=$ADMIN_API_KEY"; fi
+                    if [ -n "$AUTH_SECRET" ]; then echo "GCW_AUTH_SECRET=$AUTH_SECRET"; fi
+                    # Defaults that are safe in most setups
+                    echo "GCW_TLS_ENABLE=false"
+                  } > "$ENVF"
+                  chmod 0600 "$ENVF"
+
+                  # Create/refresh systemd unit
+                  UNIT=/etc/systemd/system/gcwserver.service
+                  cat > "$UNIT" <<'UNIT'
+                  [Unit]
+                  Description=Go Comic Writer Server (gcwserver)
+                  Wants=network-online.target
+                  After=network-online.target
+
+                  [Service]
+                  Type=simple
+                  User=gcw
+                  Group=gcw
+                  EnvironmentFile=/etc/gcwserver.env
+                  WorkingDirectory=/opt/gcwserver
+                  ExecStart=/opt/gcwserver/bin/gcwserver
+                  Restart=on-failure
+                  RestartSec=5s
+                  NoNewPrivileges=yes
+                  ProtectSystem=full
+                  ProtectHome=yes
+                  PrivateTmp=yes
+
+                  [Install]
+                  WantedBy=multi-user.target
+                  UNIT
+
+                  systemctl daemon-reload
+                  SH
+                - |
+                  cat > "$ARTIFACT_DIR/scripts/start.sh" <<'SH'
+                  #!/usr/bin/env bash
+                  set -euo pipefail
+                  systemctl enable gcwserver || true
+                  systemctl restart gcwserver
+                  SH
+                - |
+                  cat > "$ARTIFACT_DIR/scripts/stop.sh" <<'SH'
+                  #!/usr/bin/env bash
+                  set -euo pipefail
+                  if systemctl is-active --quiet gcwserver; then
+                    systemctl stop gcwserver || true
+                  fi
+                  SH
+                - |
+                  cat > "$ARTIFACT_DIR/scripts/validate.sh" <<'SH'
+                  #!/usr/bin/env bash
+                  set -euo pipefail
+                  # Basic check that service is running
+                  systemctl is-active --quiet gcwserver
+                  SH
+                - chmod +x "$ARTIFACT_DIR"/scripts/*.sh
+          artifacts:
+            base-directory: dist
+            files:
+              - '**/*'
+      TimeoutInMinutes: 30
+
+  CodeDeployServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-codedeploy-service-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codedeploy.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
+
+  CodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: !Sub ${ProjectName}-app
+      ComputePlatform: Server
+
+  CodeDeployDeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref CodeDeployApplication
+      DeploymentGroupName: !Sub ${ProjectName}-dg
+      ServiceRoleArn: !GetAtt CodeDeployServiceRole.Arn
+      DeploymentConfigName: CodeDeployDefault.OneAtATime
+      Ec2TagFilters:
+        - Key: !Ref EC2TagKey
+          Value: !Ref EC2TagValue
+          Type: KEY_AND_VALUE
+      AutoRollbackConfiguration:
+        Enabled: true
+        Events:
+          - DEPLOYMENT_FAILURE
+      DeploymentStyle:
+        DeploymentType: IN_PLACE
+        DeploymentOption: WITHOUT_TRAFFIC_CONTROL
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Ref PipelineName
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref PipelineArtifactBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: '1'
+              Configuration:
+                ConnectionArn: !Ref GitHubConnectionArn
+                FullRepositoryId: !Sub ${GitHubOwner}/${GitHubRepo}
+                BranchName: !Ref BranchName
+                OutputArtifactFormat: CODE_ZIP
+                DetectChanges: true
+              OutputArtifacts:
+                - Name: SourceArtifact
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: Build
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+              InputArtifacts:
+                - Name: SourceArtifact
+              OutputArtifacts:
+                - Name: BuildOutput
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            - Name: DeployToEC2
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CodeDeploy
+                Version: '1'
+              Configuration:
+                ApplicationName: !Ref CodeDeployApplication
+                DeploymentGroupName: !Ref CodeDeployDeploymentGroup
+              InputArtifacts:
+                - Name: BuildOutput
+              RunOrder: 1
+
+Outputs:
+  PipelineNameOut:
+    Description: Name of the created CodePipeline
+    Value: !Ref Pipeline
+  ArtifactBucketName:
+    Description: Name of the S3 bucket used for CodePipeline artifacts
+    Value: !Ref PipelineArtifactBucket
+  CodeBuildProjectName:
+    Description: Name of the CodeBuild project
+    Value: !Ref CodeBuildProject
+  CodeDeployAppName:
+    Description: Name of the CodeDeploy application
+    Value: !Ref CodeDeployApplication
+  CodeDeployDeploymentGroupName:
+    Description: Name of the CodeDeploy deployment group
+    Value: !Ref CodeDeployDeploymentGroup

@@ -46,6 +46,8 @@ Helpful environment variables (logging):
 
 - cmd/gocomicwriter
   - Main program entry. Build with `-tags fyne` for the desktop UI, or without for a CLI/stub.
+- cmd/gcwserver
+  - Thin backend server (gcwserver). Read-only APIs for listing projects and search; basic sync in progress.
 - internal/ui
   - Desktop UI implemented with Fyne v2.
   - Build-tagged variants:
@@ -57,6 +59,8 @@ Helpful environment variables (logging):
 - internal/storage
   - Project persistence layer (transactional save, backups, validation against schema).
   - Fall‑back open: if manifest is unreadable, auto‑selects latest valid backup.
+- internal/backend
+  - Postgres-backed backend models, migrations, and client; used by gcwserver and tests.
 - internal/export
   - Exporters for PDF, PNG, SVG, CBZ, and EPUB.
 - internal/script
@@ -151,6 +155,11 @@ With coverage
 Race detector
 - go test -race ./...
 
+Backend integration tests (gcwserver/internal/backend)
+- Require PostgreSQL 17+ and a DSN via `GCW_PG_DSN` (preferred) or `DATABASE_URL`.
+- Example (PowerShell): `$env:GCW_PG_DSN='postgres://postgres:postgres@localhost:5432/gocomicwriter?sslmode=disable'; go test ./internal/backend -run E2E`
+- Or start Postgres via Docker Compose: `docker compose up -d postgres`
+
 UI tests (optional)
 - These are gated behind the `fyne` tag to avoid CI display dependencies.
 - Run locally only when you have Fyne deps and a display:
@@ -182,23 +191,25 @@ Commit messages
 
 ## Versioning and releases
 
-- Version lives in internal/version/version.go (const Version).
-- Use semantic versioning (MAJOR.MINOR.PATCH‑pre) and keep CHANGELOG.md updated.
+- Version source: internal/version/version.go (var Version).
+- It can be overridden at build time via ldflags: `-ldflags "-X gocomicwriter/internal/version.Version=<value>"`. Our release tooling (GoReleaser/scripts) populates this from the git tag.
+- Use semantic versioning (MAJOR.MINOR.PATCH[-pre]) and keep CHANGELOG.md updated (Keep a Changelog).
 
-Release checklist (manual)
+Release checklist
 1) Ensure tests are green locally and in CI.
-2) Update internal/version.Version to the new tag (e.g., 0.6.0).
-3) Update CHANGELOG.md.
-4) Tag the commit: `git tag v0.6.0 && git push --tags`.
-5) Build release artifacts:
+2) Update CHANGELOG.md.
+3) Tag the commit: `git tag vX.Y.Z && git push --tags`.
+4) Build release artifacts:
    - Cross‑compile non‑UI binaries as needed.
    - For UI binaries, build natively per OS with `-tags fyne`.
-6) Optionally publish artifacts to S3 or GitHub Releases.
+   - Or run `scripts/build_release.ps1` (Windows) or `scripts/build_release.sh` (Linux/macOS); pass the release option to publish.
+5) Optionally publish artifacts to S3 or GitHub Releases.
 
 CI/CD on AWS (optional)
-- See docs/ci-cd-aws.md and docs/aws-codepipeline.yml.
-- The template provisions CodePipeline + CodeBuild to build/test and optionally upload artifacts to S3.
-- Adjust the inline buildspec to point to ./cmd/gocomicwriter (see doc for details).
+- See `docs/AWS/ci-cd-aws.md` and `docs/AWS/aws-codepipeline.yml`.
+- A separate template for the backend server is available at `docs/AWS/gcwserver-aws-codepipeline.yml`.
+- The templates provision CodePipeline + CodeBuild to build/test and optionally upload artifacts to S3.
+- Adjust the inline buildspec to point to the correct entry points (e.g., `./cmd/gocomicwriter` and/or `./cmd/gcwserver`).
 
 
 ## Local developer workflow
@@ -218,7 +229,7 @@ CI/CD on AWS (optional)
 - Please read CODE_OF_CONDUCT.md.
 - Open a PR with a clear description and small, focused changes.
 - Add or update tests for your changes.
-- Keep docs in sync (README, this guide, and the JSON schema if data model changes).
+- Keep docs in sync (README, this guide, CHANGELOG, and the JSON schema if data model changes).
 
 
 ## Roadmap and design
