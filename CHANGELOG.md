@@ -6,6 +6,15 @@ The format is based on Keep a Changelog (https://keepachangelog.com/en/1.1.0/),
 and this project adheres to Semantic Versioning. This is a pre-release
 (0.x) and APIs may change at any time.
 
+## [2025.12-Beta2] - 2025-10-dd
+
+### Added
+- Changed look of the bible dialog 
+-  Reorganized AWS things within the project
+- Added a settings dialog to gocomicwriter to enable/disable environment variables.
+- Auto-create database in gcwserver if missing.
+- Enable multi-user access to shared database (Desktop/Ui and SQL only option).
+
 ## [2025.12-Beta1] - 2025-10-02
 
 ### Added
