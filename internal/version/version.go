@@ -9,7 +9,8 @@
 package version
 
 // Version is the current application version. Update this before releases.
-const Version = "0.10.0-dev"
+// NOTE: var (not const) so it can be overridden at build time via -ldflags "-X gocomicwriter/internal/version.Version=<value>"
+var Version = "2025.12-Beta1"
 
 // String returns the version string.
 func String() string { return Version }
