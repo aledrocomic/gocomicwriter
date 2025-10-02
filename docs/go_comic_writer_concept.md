@@ -288,9 +288,9 @@ Alignment with Definition of Done:
 - [✓] Tests: parity checks for search between SQLite and Postgres; end-to-end integration tests.
 
 ### Phase 8 — Packaging & Distribution
-- [ ] Cross-platform builds and installers.
-- [ ] Crash reporting and opt-in telemetry (anonymous usage metrics).
-- [ ] Documentation site with tutorials and templates.
+- [✓] Cross-platform builds and installers.
+- [✓] Crash reporting and opt-in telemetry (anonymous usage metrics).
+- [✓] Documentation PDF with tutorials and templates (see docs/tutorials_and_templates.md; build via scripts/build_docs.ps1 → docs/gocomicwriter_tutorials_templates.pdf).
 
 ### Phase 9 — QA & Performance
 - [ ] Performance benchmarks on large issues; profiling and optimizations.

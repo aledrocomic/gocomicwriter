@@ -1,0 +1,108 @@
+# GoReleaser configuration for gocomicwriter and gcwserver
+# This file defines cross-platform builds and basic installers, aligned with docs/go_comic_writer_concept.md Phase 8.
+# Usage examples:
+#  - Snapshot (no signing/releases): goreleaser build --snapshot --clean
+#  - Full release (tagged): goreleaser release --clean
+
+version: 2
+
+project_name: gocomicwriter
+
+dist: dist
+
+env:
+  - CGO_ENABLED=1 # default; can be overridden per-build
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: gocomicwriter
+    main: ./cmd/gocomicwriter
+    binary: gocomicwriter
+    env:
+      - CGO_ENABLED=1
+    flags:
+      - -tags=fyne
+      - -trimpath
+    ldflags:
+      - -s -w -X gocomicwriter/internal/version.Version={{ .Version }}
+    goos:
+      - windows
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    mod_timestamp: '{{ .CommitDate }}'
+
+  - id: gcwserver
+    main: ./cmd/gcwserver
+    binary: gcwserver
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X gocomicwriter/internal/version.Version={{ .Version }}
+    goos:
+      - windows
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: '{{ .CommitDate }}'
+
+archives:
+  - id: archive
+    formats:
+      - zip
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .ArtifactExtra.ID }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+
+nfpms:
+  - id: linux-packages
+    package_name: gocomicwriter
+    vendor: Go Comic Writer
+    homepage: https://example.com/gocomicwriter
+    maintainer: Alexander Drost <alex@example.com>
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    section: utils
+    priority: optional
+    description: |
+      Go Comic Writer and GCW Server.
+      gocomicwriter is a desktop UI (Fyne) application.
+      gcwserver is a thin backend for collaboration/search.
+    file_name_template: '{{ .PackageName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    recommends:
+      - ca-certificates
+
+checksum:
+  name_template: "checksums.txt"
+
+dockers: []
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
