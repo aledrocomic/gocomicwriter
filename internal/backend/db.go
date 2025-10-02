@@ -23,6 +23,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"sort"
@@ -30,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"gocomicwriter/internal/storage"
@@ -125,7 +127,17 @@ func Start() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := db.PingContext(ctx); err != nil {
-		return fmt.Errorf("ping db: %w", err)
+		if isInvalidCatalog(err) {
+			if err2 := tryCreateMissingDatabase(ctx, cfg.DBURL); err2 != nil {
+				return fmt.Errorf("ping db: %w; additionally failed to create database: %v", err, err2)
+			}
+			// Retry ping after creating the database
+			if err3 := db.PingContext(ctx); err3 != nil {
+				return fmt.Errorf("ping db after create: %w", err3)
+			}
+		} else {
+			return fmt.Errorf("ping db: %w", err)
+		}
 	}
 
 	if err := applyMigrations(ctx, db); err != nil {
@@ -289,13 +301,24 @@ func Start() error {
 					writeError(w, http.StatusInternalServerError, err)
 					return
 				}
+			} else {
+				// In dev mode, auto-provision user on first request
+				if _, err := db.ExecContext(r.Context(), `INSERT INTO users(email) VALUES ($1) ON CONFLICT (email) DO NOTHING`, sub); err != nil {
+					writeError(w, http.StatusInternalServerError, err)
+					return
+				}
 			}
 			next(w, r, sub)
 		}
 	}
 	// GET /api/projects (auth required)
 	mux.HandleFunc("/api/projects", authWrap(func(w http.ResponseWriter, r *http.Request, sub string) {
-		rows, err := db.QueryContext(r.Context(), `SELECT id, stable_id, name, updated_at, version FROM projects ORDER BY updated_at DESC`)
+		rows, err := db.QueryContext(r.Context(), `SELECT p.id, p.stable_id, p.name, p.updated_at, p.version
+		FROM projects p
+		JOIN project_members pm ON pm.project_id = p.id
+		JOIN users u ON u.id = pm.user_id
+		WHERE u.email = $1
+		ORDER BY p.updated_at DESC`, sub)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
@@ -335,6 +358,22 @@ func Start() error {
 		if err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("invalid project id"))
 			return
+		}
+		// Enforce membership: user must be a member of this project
+		{
+			var x int
+			if err := db.QueryRowContext(r.Context(), `SELECT 1
+				FROM project_members pm
+				JOIN users u ON u.id = pm.user_id
+				WHERE u.email = $1 AND pm.project_id = $2`, sub, pid).Scan(&x); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					w.WriteHeader(http.StatusForbidden)
+					_, _ = w.Write([]byte("forbidden"))
+					return
+				}
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
 		}
 		// /api/projects/{id}/index (GET)
 		if len(parts) == 4 && parts[3] == "index" {
@@ -541,7 +580,11 @@ func Start() error {
 					writeError(w, http.StatusInternalServerError, err)
 					return
 				}
-				defer rows.Close()
+				defer func() {
+					if cerr := rows.Close(); cerr != nil {
+						log.Printf("error closing rows: %v", cerr)
+					}
+				}()
 				type op struct {
 					OpID       string          `json:"op_id"`
 					Version    int64           `json:"version"`
@@ -575,6 +618,85 @@ func Start() error {
 		}
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte("not found"))
+	}))
+
+	// Admin: grant membership endpoint (ensures user exists and grants role on project)
+	mux.HandleFunc("/api/admin/membership/grant", authWrap(func(w http.ResponseWriter, r *http.Request, sub string) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		// In static mode, require admin API key
+		if cfg.AuthMode == "static" {
+			if cfg.AdminAPIKey == "" || r.Header.Get("X-API-Key") != cfg.AdminAPIKey {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte("unauthorized"))
+				return
+			}
+		}
+		var req struct {
+			Email       string `json:"email"`
+			DisplayName string `json:"display_name"`
+			Role        string `json:"role"`
+			ProjectID   int64  `json:"project_id"`
+			ProjectSlug string `json:"project_slug"`
+		}
+		b, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("invalid request body"))
+			return
+		}
+		_ = r.Body.Close()
+		if err := json.Unmarshal(b, &req); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("invalid json"))
+			return
+		}
+		email := strings.TrimSpace(req.Email)
+		if email == "" {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("email required"))
+			return
+		}
+		role := strings.TrimSpace(req.Role)
+		if role == "" {
+			role = "owner"
+		}
+		// Resolve project id
+		pid := req.ProjectID
+		if pid == 0 {
+			slug := strings.TrimSpace(req.ProjectSlug)
+			if slug == "" {
+				writeError(w, http.StatusBadRequest, fmt.Errorf("project_id or project_slug required"))
+				return
+			}
+			if err := db.QueryRowContext(r.Context(), `SELECT id FROM projects WHERE slug = $1`, slug).Scan(&pid); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					writeError(w, http.StatusNotFound, fmt.Errorf("project not found"))
+					return
+				}
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+		}
+		// Ensure user exists or update display_name
+		if _, err := db.ExecContext(r.Context(), `INSERT INTO users(email, display_name) VALUES ($1, NULLIF($2,'') )
+			ON CONFLICT (email) DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, users.display_name)`, email, req.DisplayName); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		// Insert or update membership
+		if _, err := db.ExecContext(r.Context(), `INSERT INTO project_members(user_id, project_id, role)
+			SELECT u.id, $2, $3 FROM users u WHERE u.email = $1
+			ON CONFLICT (user_id, project_id) DO UPDATE SET role = EXCLUDED.role`, email, pid, role); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"project_id": pid,
+			"user":       email,
+			"role":       role,
+			"granted_by": sub,
+			"status":     "granted",
+		})
 	}))
 
 	server := &http.Server{
@@ -738,26 +860,6 @@ func verifyToken(secret, token string) (string, error) {
 	return claims.Sub, nil
 }
 
-func withAuth(secret string, next func(w http.ResponseWriter, r *http.Request, subject string)) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		const prefix = "Bearer "
-		if !strings.HasPrefix(strings.ToLower(auth), strings.ToLower(prefix)) {
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte("missing bearer token"))
-			return
-		}
-		token := strings.TrimSpace(auth[len(prefix):])
-		sub, err := verifyToken(secret, token)
-		if err != nil {
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte("invalid token"))
-			return
-		}
-		next(w, r, sub)
-	}
-}
-
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -767,4 +869,143 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]any{"error": err.Error()})
+}
+
+// isInvalidCatalog returns true if the error indicates the target database does not exist (SQLSTATE 3D000).
+func isInvalidCatalog(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code == "3D000" { // invalid_catalog_name
+			return true
+		}
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "sqlstate 3d000") || (strings.Contains(s, "database") && strings.Contains(s, "does not exist"))
+}
+
+// tryCreateMissingDatabase connects to the maintenance database and creates the target DB if it does not exist.
+func tryCreateMissingDatabase(ctx context.Context, dsn string) error {
+	dbname, ok := getDBNameFromDSN(dsn)
+	if !ok || dbname == "" {
+		return fmt.Errorf("cannot determine database name from DSN")
+	}
+	adminDSN := setDBNameInDSN(dsn, "postgres")
+
+	adminDB, err := sql.Open("pgx", adminDSN)
+	if err != nil {
+		return fmt.Errorf("open admin db: %w", err)
+	}
+	defer func() { _ = adminDB.Close() }()
+
+	if err := adminDB.PingContext(ctx); err != nil {
+		return fmt.Errorf("ping admin db: %w", err)
+	}
+
+	var one int
+	err = adminDB.QueryRowContext(ctx, "SELECT 1 FROM pg_database WHERE datname=$1", dbname).Scan(&one)
+	if err == nil {
+		// already exists
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("check db existence: %w", err)
+	}
+
+	qname := `"` + strings.ReplaceAll(dbname, `"`, `""`) + `"`
+	if _, err := adminDB.ExecContext(ctx, "CREATE DATABASE "+qname); err != nil {
+		return fmt.Errorf("create database %s: %w", dbname, err)
+	}
+	log.Printf("INFO: created database %q", dbname)
+	return nil
+}
+
+// getDBNameFromDSN extracts the database name from a postgres DSN (URL or key=value form).
+func getDBNameFromDSN(dsn string) (string, bool) {
+	if u, err := url.Parse(dsn); err == nil && (u.Scheme == "postgres" || u.Scheme == "postgresql") {
+		name := strings.TrimPrefix(u.Path, "/")
+		if name != "" {
+			if i := strings.Index(name, "/"); i >= 0 {
+				name = name[:i]
+			}
+			if name != "" {
+				return name, true
+			}
+		}
+		q := u.Query().Get("dbname")
+		if q != "" {
+			return q, true
+		}
+		return "", false
+	}
+	// key=value form
+	tokens := splitDSNTokens(dsn)
+	for _, t := range tokens {
+		lt := strings.ToLower(t)
+		if strings.HasPrefix(lt, "dbname=") || strings.HasPrefix(lt, "database=") {
+			v := t[strings.Index(t, "=")+1:]
+			v = strings.Trim(v, "'\"")
+			if v != "" {
+				return v, true
+			}
+		}
+	}
+	return "", false
+}
+
+// setDBNameInDSN returns a DSN string with the database name replaced/added.
+func setDBNameInDSN(dsn, newDB string) string {
+	if u, err := url.Parse(dsn); err == nil && (u.Scheme == "postgres" || u.Scheme == "postgresql") {
+		u.Path = "/" + newDB
+		q := u.Query()
+		q.Set("dbname", newDB)
+		u.RawQuery = q.Encode()
+		return u.String()
+	}
+	tokens := splitDSNTokens(dsn)
+	found := false
+	for i, t := range tokens {
+		lt := strings.ToLower(t)
+		if strings.HasPrefix(lt, "dbname=") || strings.HasPrefix(lt, "database=") {
+			k := t[:strings.Index(t, "=")+1]
+			tokens[i] = k + newDB
+			found = true
+		}
+	}
+	if !found {
+		tokens = append(tokens, "dbname="+newDB)
+	}
+	return strings.Join(tokens, " ")
+}
+
+// splitDSNTokens splits a key=value DSN into tokens, respecting quotes around values.
+func splitDSNTokens(s string) []string {
+	var tokens []string
+	var buf strings.Builder
+	inQuote := false
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\'' || c == '"' {
+			if inQuote && c == quote {
+				inQuote = false
+			} else if !inQuote {
+				inQuote = true
+				quote = c
+			}
+			buf.WriteByte(c)
+			continue
+		}
+		if c == ' ' && !inQuote {
+			if buf.Len() > 0 {
+				tokens = append(tokens, buf.String())
+				buf.Reset()
+			}
+			continue
+		}
+		buf.WriteByte(c)
+	}
+	if buf.Len() > 0 {
+		tokens = append(tokens, buf.String())
+	}
+	return tokens
 }

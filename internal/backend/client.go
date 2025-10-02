@@ -26,9 +26,10 @@ import (
 // Client is a minimal HTTP client for the thin backend API.
 // It supports read-only operations used by the desktop app under a feature flag.
 type Client struct {
-	BaseURL string
-	Token   string // bearer token
-	client  *http.Client
+	BaseURL     string
+	Token       string // bearer token
+	AdminAPIKey string // optional admin key for static mode admin endpoints
+	client      *http.Client
 }
 
 // NewClient creates a new backend client. baseURL may include a trailing slash; it will be normalized.
@@ -52,6 +53,9 @@ func (c *Client) doJSON(ctx context.Context, method, path string, dest any) erro
 	}
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	if c.AdminAPIKey != "" {
+		req.Header.Set("X-API-Key", c.AdminAPIKey)
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -85,6 +89,9 @@ func (c *Client) doJSONWithBody(ctx context.Context, method, path string, body a
 	req.Header.Set("Content-Type", "application/json")
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	if c.AdminAPIKey != "" {
+		req.Header.Set("X-API-Key", c.AdminAPIKey)
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -250,4 +257,32 @@ func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
 		return nil, err
 	}
 	return &hs, nil
+}
+
+// --- Admin: Grant membership ---
+
+type GrantMembershipRequest struct {
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name,omitempty"`
+	Role        string `json:"role,omitempty"`
+	ProjectID   int64  `json:"project_id,omitempty"`
+	ProjectSlug string `json:"project_slug,omitempty"`
+}
+
+type GrantMembershipResponse struct {
+	ProjectID int64  `json:"project_id"`
+	User      string `json:"user"`
+	Role      string `json:"role"`
+	GrantedBy string `json:"granted_by"`
+	Status    string `json:"status"`
+}
+
+// AdminGrantMembership calls the admin endpoint to provision a user (if necessary) and grant a role
+// on a project. Requires c.AdminAPIKey to be set when the server runs in static auth mode.
+func (c *Client) AdminGrantMembership(ctx context.Context, req GrantMembershipRequest) (*GrantMembershipResponse, error) {
+	var res GrantMembershipResponse
+	if err := c.doJSONWithBody(ctx, http.MethodPost, "/api/admin/membership/grant", req, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
 }

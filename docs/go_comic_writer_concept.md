@@ -294,6 +294,8 @@ Alignment with Definition of Done:
 
 ### Phase 9 — QA & Performance
 - [✓] Added a settings dialog to gocomicwriter to enable/disable environment variables.
+- [✓] Auto-create database in gcwserver if missing.
+- [✓] Enable multi-user access to shared database (Desktop/Ui and SQL only option).
 - [ ] Performance benchmarks on large issues; profiling and optimizations.
 - [ ] Automated validation: manifest schema, font embedding checks.
 - [ ] Accessibility audit and keyboard shortcut coverage.

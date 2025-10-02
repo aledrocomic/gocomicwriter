@@ -16,6 +16,7 @@ This repository provides the Go Comic Writer desktop app and backend server, an 
 - Install and quick start
 - Usage
 - Backend (gcwserver) — run locally
+- How-to: Deploy gcwserver on AWS EC2 (Debian) with GoLand 2025.2 — docs/deploy_gcwserver_aws_ec2_debian_goland_2025_2.md
 - Common commands (scripts)
 - Logging and environment variables
 - Project manifest (comic.json) and schema
@@ -443,6 +444,17 @@ Key environment variables (see .env.example)
 Notes
 - docker-compose.yml includes an example Postgres 17 service and an optional MinIO service. A containerized gcwserver service is provided as commented instructions within the file; adapt if you want to run the server inside Docker.
 - For production, configure TLS and switch `GCW_AUTH_MODE` to `static`, provision users, and protect token issuance with the admin API key.
+- Multi-user database sharing: endpoints are automatically scoped by user membership. A user only sees and can query projects they belong to via `project_members`.
+  - Recommended (Desktop UI): Use Server → “Grant Project Access…” in gocomicwriter to provision a user (by email) and grant a role on a selected project. In `static` auth mode you must provide the Admin API Key in the dialog.
+  - Advanced (SQL, optional): You can still perform the steps manually if preferred:
+    1. Ensure the user exists (static mode usually provisions via `/api/auth/token`):
+       - `INSERT INTO users(email, display_name) VALUES('alice@example.com','Alice') ON CONFLICT (email) DO NOTHING;`
+    2. Add membership:
+       - `INSERT INTO project_members(user_id, project_id, role)
+          SELECT u.id, p.id, 'owner'
+          FROM users u, projects p
+          WHERE u.email='alice@example.com' AND p.slug='my-project';`
+  - In `dev` auth mode, unknown users are auto-provisioned on first request, but membership still must be created (or granted via the dialog) to see projects.
 
 
 ## Repository layout

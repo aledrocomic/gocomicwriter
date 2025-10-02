@@ -1442,6 +1442,86 @@ func Run(projectDir string) error {
 		form.Show()
 	}
 
+	showGrantAccessDialog := func() {
+		base := strings.TrimSpace(prefs.StringWithFallback("server.url", ""))
+		tok := strings.TrimSpace(prefs.StringWithFallback("server.token", ""))
+		if base == "" || tok == "" {
+			dialog.ShowInformation("Server", "Connect to the server first via Server → Connect to Server…", w)
+			return
+		}
+		cl := backend.NewClient(base, tok)
+		cl.AdminAPIKey = prefs.StringWithFallback("server.admin_key", "")
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		plist, err := cl.ListProjects(ctx)
+		if err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		type projOpt struct {
+			Label string
+			ID    int64
+		}
+		var opts []projOpt
+		var labels []string
+		for _, p := range plist {
+			lbl := fmt.Sprintf("%s (id:%d v%d)", p.Name, p.ID, p.Version)
+			labels = append(labels, lbl)
+			opts = append(opts, projOpt{Label: lbl, ID: p.ID})
+		}
+		var selProjectID int64
+		projectSelect := widget.NewSelect(labels, func(s string) {
+			for _, o := range opts {
+				if o.Label == s {
+					selProjectID = o.ID
+					break
+				}
+			}
+		})
+		if len(labels) > 0 {
+			projectSelect.SetSelected(labels[0])
+			selProjectID = opts[0].ID
+		}
+		emailEntry := widget.NewEntry()
+		emailEntry.SetPlaceHolder("alice@example.com")
+		nameEntry := widget.NewEntry()
+		nameEntry.SetPlaceHolder("Alice (optional)")
+		roleSelect := widget.NewSelect([]string{"owner", "editor", "viewer"}, nil)
+		roleSelect.SetSelected("owner")
+		adminKeyEntry := widget.NewPasswordEntry()
+		adminKeyEntry.SetPlaceHolder("Admin API Key (for static mode)")
+		if k := cl.AdminAPIKey; k != "" {
+			adminKeyEntry.SetText(k)
+		}
+		form := dialog.NewForm("Grant Project Access", "Grant", "Cancel", []*widget.FormItem{
+			widget.NewFormItem("Project", projectSelect),
+			widget.NewFormItem("Email", emailEntry),
+			widget.NewFormItem("Display Name", nameEntry),
+			widget.NewFormItem("Role", roleSelect),
+			widget.NewFormItem("Admin API Key", adminKeyEntry),
+		}, func(ok bool) {
+			if !ok {
+				return
+			}
+			if selProjectID == 0 || strings.TrimSpace(emailEntry.Text) == "" {
+				dialog.ShowInformation("Grant Project Access", "Please select a project and enter an email.", w)
+				return
+			}
+			cl.AdminAPIKey = strings.TrimSpace(adminKeyEntry.Text)
+			prefs.SetString("server.admin_key", cl.AdminAPIKey)
+			req := backend.GrantMembershipRequest{ProjectID: selProjectID, Email: strings.TrimSpace(emailEntry.Text), DisplayName: strings.TrimSpace(nameEntry.Text), Role: strings.TrimSpace(roleSelect.Selected)}
+			ctx2, cancel2 := context.WithTimeout(context.Background(), 8*time.Second)
+			defer cancel2()
+			res, err := cl.AdminGrantMembership(ctx2, req)
+			if err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			dialog.ShowInformation("Grant Project Access", fmt.Sprintf("Granted %s as %s on project %d.", res.User, res.Role, res.ProjectID), w)
+		}, w)
+		form.Show()
+	}
+
 	// Build menus
 	var closeProjItem *fyne.MenuItem
 	newItem := fyne.NewMenuItem("New…", func() {
@@ -2613,7 +2693,8 @@ func Run(projectDir string) error {
 	menus := []*fyne.Menu{fileMenu, editMenu, issueMenu, insertMenu, exportMenu}
 	if serverFeatureEnabled() {
 		connectItem := fyne.NewMenuItem("Connect to Server…", func() { showServerConnectDialog() })
-		serverMenu := fyne.NewMenu("Server", connectItem)
+		grantItem := fyne.NewMenuItem("Grant Project Access…", func() { showGrantAccessDialog() })
+		serverMenu := fyne.NewMenu("Server", connectItem, grantItem)
 		menus = append(menus, serverMenu)
 	}
 	menus = append(menus, aboutMenu)
