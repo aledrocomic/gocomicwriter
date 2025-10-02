@@ -2,13 +2,14 @@
 
 A Go-powered project aiming to become a writing, planning, and lettering toolchain for comics — from script to precisely lettered pages — with reliable exports for print and screen.
 
-This repository currently provides a development skeleton: a desktop UI, an evolving domain model, and a public JSON schema for the project manifest. The product concept and roadmap live in docs/go_comic_writer_concept.md. For the 2.x plan and tasks, see docs/go_comic_writer_concept_2x.md.
+This repository provides the Go Comic Writer desktop app and backend server, an evolving domain model, and a public JSON schema for the project manifest. The product concept and roadmap live in docs/go_comic_writer_concept.md. For the 2.x plan and tasks, see docs/go_comic_writer_concept_2x.md.
 
 - Vision: Empower comic creators to go from script to lettered pages in one streamlined, offline‑first tool.
-- Status: Early stage (0.10.0‑dev). Not production‑ready.
+- Status: Public Beta (as of 2025-10-02). Suitable for evaluation and small projects; expect some features to be incomplete. Back up your work regularly.
 - License: Apache 2.0
 
 ## Contents
+- Beta Program (Public Beta)
 - What is this? (short overview)
 - Tech stack and entry points
 - Current features and what’s next
@@ -23,9 +24,33 @@ This repository currently provides a development skeleton: a desktop UI, an evol
 - Tests
 - Developer Guide (for contributors): docs/developer-guide.md
 - Roadmap and concept
+- Tutorials & templates: docs/tutorials_and_templates.md (build PDF with scripts/build_docs.ps1)
 - CI/CD and releases
 - Contributing and conduct
 - License
+
+## Beta Program (Public Beta)
+As of 2025-10-02, Go Comic Writer has entered Public Beta. The Beta is intended for evaluation, early adopters, and small real projects. Expect some rough edges and the occasional breaking change. Always keep backups of your projects.
+
+What's included
+- The core desktop app with canvas, project storage with timestamped backups, exporters (PDF/PNG/SVG/CBZ/EPUB), a structured script editor with outline and beat mapping, an assets panel, style packs, full-text search, and undo/redo. See “Current features (Beta)” below for details.
+
+Known limitations
+- Some lettering and pro typography tools are still in progress.
+- Advanced export presets and fine-grained options are limited.
+- See “What’s not in Beta yet” below.
+
+Stability and data safety
+- comic.json is the human-readable source of truth. Each save is transactional and writes a timestamped backup under backups/.
+- On a crash, the app writes a crash log and an autosave snapshot.
+
+Getting the Beta
+- When available, prebuilt Beta binaries are published on the repository’s Releases page.
+- Building from source is fully supported on Windows, macOS, and Linux; see “Install and quick start” below.
+
+Feedback and support
+- Please file bugs and feature requests in the issue tracker. Include steps to reproduce, logs, and screenshots where possible.
+- Anonymous telemetry and crash uploads are OFF by default. You can opt in via environment variables; see “Telemetry (opt-in) and crash reporting” below.
 
 ## What is this?
 Go Comic Writer is an in‑progress toolchain for comic writing and lettering. It’s designed to be:
@@ -53,7 +78,7 @@ Entry points:
   - app_fyne_nocgo.go — helpful message when `fyne` is set but cgo is disabled.
   - app_stub.go — stub when built without the `fyne` tag.
 
-## Current features (alpha)
+## Current features (Beta)
 - Desktop UI launcher; optional project path argument to open on startup.
 - Transactional project storage with a human‑readable manifest (comic.json) and timestamped backups under backups/.
 - Crash safety: on panic, write a crash report and autosave snapshot; on open, fall back to the latest valid backup if the manifest is unreadable.
@@ -80,19 +105,19 @@ Entry points:
 - Documentation: Merge-friendly project format guidance and diff tips (see “Merge-friendly Project Format & Diff Tips” in docs/go_comic_writer_concept.md).
 - About menu with environment info (Go version, OS/arch, cgo/fyne status) and a Copyright dialog.
 - Unit tests for core packages (storage, logging, crash, version, schema).
-
-### Implemented in Phase 1 — Core rendering & geometry
 - Vector primitives and transforms with a small scene graph and hit testing (see internal/vector: geometry.go, node.go, path.go, style.go).
 - Text layout abstraction scaffolding (internal/textlayout) to prepare for typography and balloon text.
 - Page canvas with trim/bleed/gutter guides, pan/zoom, and selection in the experimental UI (build with `-tags fyne`).
 - Shapes: rectangles, ellipses, rounded boxes, and paths, with axis-aligned bounds for layout/selection.
 - Selection and transform handles enabling move, scale (corner handles), and rotate (rotation handle).
 
-What’s not here yet:
+What’s not in Beta yet:
 - Full-featured rendering/lettering engine and pro typography tools in the editor.
 - Advanced export options and presets in the UI (basic PDF/PNG/SVG/CBZ exporters are implemented).
 
 ## Install and quick start
+
+Note for the Beta: When available, prebuilt Beta binaries are published on the repository’s Releases page. If no release assets are provided for your platform yet, you can build from source using the steps below.
 Prerequisites:
 - Go 1.24 or newer
 - A supported OS (Windows/macOS/Linux)
@@ -246,6 +271,21 @@ The app includes a few early, opt-in features that are hidden by default and can
   - Adds a “Server” menu with “Connect to Server…”.
   - Lets you connect to a running gcwserver backend (base URL + bearer token), list projects, and view an index snapshot per project.
   - Read-only: no data is written to your local project; comic.json on disk remains the source of truth.
+
+## Telemetry (opt-in) and crash reporting
+The app includes a tiny, privacy-respecting telemetry client that is disabled by default. When enabled by you, it sends anonymous usage events (like "app_start" and "project_open" with simple counts) and can upload crash reports. No project paths, filenames, or personal data are sent.
+
+How to enable (env-based; default is OFF):
+- GCW_TELEMETRY_OPT_IN=1
+- GCW_TELEMETRY_URL=https://your.endpoint.example/telemetry  (receives JSON events)
+- GCW_CRASH_UPLOAD_URL=https://your.endpoint.example/crash     (receives text/plain crash logs)
+- GCW_TELEMETRY_TIMEOUT_MS=1500                                 (optional; default 1500ms)
+- GCW_TELEMETRY_DEBUG=1                                         (optional; logs send attempts)
+
+Notes:
+- If URLs are not set, nothing is sent even if GCW_TELEMETRY_OPT_IN=1.
+- Telemetry never blocks the UI; it uses a small async queue and drops on failure.
+- Crash reports are also written locally under backups/ or the system temp folder regardless of opt-in; upload only happens when GCW_TELEMETRY_OPT_IN=1 and GCW_CRASH_UPLOAD_URL is configured.
 
 ## Crash reports and autosave
 On an unexpected crash (panic), the app will:
@@ -424,6 +464,48 @@ Highlights:
 - Lettering tools (balloons, tails, SFX) with pro typography
 - Deterministic exporters: PDF, PNG/SVG, CBZ, EPUB
 
+## Cross-platform builds and installers
+
+This repository includes a GoReleaser configuration (.goreleaser.yaml) and helper scripts to produce cross-platform builds and basic installers for both applications:
+- gocomicwriter — the desktop UI (Fyne). Built with CGO enabled and the build tag `fyne`.
+- gcwserver — the thin backend server. Built without CGO by default.
+
+Artifacts
+- Windows: ZIP archives with .exe binaries.
+- macOS: tar.gz/ZIP archives with binaries. App bundle packaging is planned; see docs/go_comic_writer_concept.md (Phase 8).
+- Linux: tar.gz archives and .deb/.rpm packages (nfpm).
+
+Where outputs go
+- dist/ contains all build artifacts (archives, checksums, linux packages).
+
+How to build locally (snapshot, no publish)
+- PowerShell (Windows):
+  - ./scripts/build_release.ps1
+- Bash (Linux/macOS):
+  - ./scripts/build_release.sh
+
+Full release (publishing) requires tagging and additional setup; see GoReleaser docs. You can still run a local full pipeline with:
+- PowerShell: ./scripts/build_release.ps1 -Release
+- Bash: ./scripts/build_release.sh release
+
+Prerequisites for GUI builds (gocomicwriter)
+- Windows: Install MSYS2/MinGW-w64 and ensure gcc is on PATH (CGO). See https://www.msys2.org/ and verify `gcc --version` works in your shell.
+- macOS: Install Xcode Command Line Tools (`xcode-select --install`).
+- Linux: Install a C toolchain and GL/X11 headers. On Debian/Ubuntu:
+  - sudo apt-get update && sudo apt-get install -y build-essential xorg-dev
+
+Installers (Linux packages)
+- After a build, install with:
+  - Debian/Ubuntu: sudo dpkg -i dist/gocomicwriter_*.deb
+  - RHEL/Fedora: sudo rpm -i dist/gocomicwriter_*.rpm
+- These packages install both gocomicwriter and gcwserver into /usr/bin.
+
+Versioning
+- internal/version.Version is now settable at build-time via ldflags and will be populated by GoReleaser from the release version or git tag.
+
+See also
+- docs/go_comic_writer_concept.md → Phase 8 — Packaging & Distribution.
+
 ## CI/CD and releases
 
 AWS CI/CD (CodePipeline):
@@ -462,7 +544,7 @@ GitHub Actions (TODO):
 - No GitHub Actions workflows are currently included in this repository. For an example release workflow and setup instructions, see docs/ci-cd-aws.md (section "GitHub Actions-based releases"). If you add workflows later, update this README accordingly.
 
 ## Contributing and conduct
-Contributions are welcome once core foundations stabilize. Until then, feel free to:
+Contributions are welcome during the Beta. Please focus on issues, docs, and UX feedback first; larger feature work may be deferred until after Beta.
 - File issues with feedback or questions
 - Discuss the data model and schema
 - Propose improvements to docs and developer experience
@@ -472,3 +554,13 @@ Please review the Code of Conduct before participating:
 
 ## License
 Apache License 2.0 — see LICENSE for details.
+
+
+## Tutorials & templates
+
+- Read online: docs/tutorials_and_templates.md
+- Build a PDF locally (Windows, requires Pandoc):
+  - PowerShell: `scripts\build_docs.ps1`
+  - Output: `docs\gocomicwriter_tutorials_templates.pdf`
+
+If Pandoc is not installed, the script will print a helpful message and exit with a non-zero code. Install Pandoc from https://pandoc.org/installing.html.

@@ -186,8 +186,8 @@ func runMigrations(ctx context.Context, db *sql.DB) error {
 			if err := tx.Commit(); err != nil {
 				return fmt.Errorf("migration %d commit: %w", next, err)
 			}
-			// Best-effort FTS optimize (outside the tx)
-			if _, err := db.ExecContext(ctx, `INSERT INTO fts_documents(fts_documents) VALUES('optimize')`); err != nil {
+			// Best-effort DB optimize (outside the tx)
+			if _, err := db.ExecContext(ctx, `PRAGMA optimize;`); err != nil {
 				// best-effort optimize; ignore errors
 			}
 		default:
@@ -302,14 +302,18 @@ func DetectAndRebuildIndex(ctx context.Context, projectRoot string, proj domain.
 	// Try to open DB; if fails, attempt backup+delete+rebuild
 	db, err := InitOrOpenIndex(projectRoot)
 	if err != nil {
-		backupIndexFile(path)
-		_ = os.Remove(path)
+		if berr := backupIndexFile(path); berr != nil {
+			// best effort backup; continue even if it fails
+		}
+		if rerr := os.Remove(path); rerr != nil && !os.IsNotExist(rerr) {
+			return false, fmt.Errorf("remove index after open failure: %w", rerr)
+		}
 		if rbErr := RebuildIndex(ctx, projectRoot, proj); rbErr != nil {
 			return false, fmt.Errorf("rebuild after open failure: %w (open err: %v)", rbErr, err)
 		}
 		return true, nil
 	}
-	defer db.Close()
+	// do not defer close; we may need to close early before deleting file
 	needs := false
 	// quick_check for corruption
 	var chk string
@@ -323,11 +327,24 @@ func DetectAndRebuildIndex(ctx context.Context, projectRoot string, proj domain.
 		}
 	}
 	if !needs {
+		_ = db.Close()
 		return false, nil
 	}
 	// Backup and remove existing DB file
-	backupIndexFile(path)
-	_ = os.Remove(path)
+	_ = db.Close() // ensure file handles are released before removal on Windows
+	if berr := backupIndexFile(path); berr != nil {
+		// best effort backup; continue
+	}
+	// Best-effort remove index and sidecar files, but report unexpected errors
+	if rerr := os.Remove(path); rerr != nil && !os.IsNotExist(rerr) {
+		return false, fmt.Errorf("remove index: %w", rerr)
+	}
+	if rerr := os.Remove(path + "-wal"); rerr != nil && !os.IsNotExist(rerr) {
+		return false, fmt.Errorf("remove index wal: %w", rerr)
+	}
+	if rerr := os.Remove(path + "-shm"); rerr != nil && !os.IsNotExist(rerr) {
+		return false, fmt.Errorf("remove index shm: %w", rerr)
+	}
 	// Rebuild
 	if err := RebuildIndex(ctx, projectRoot, proj); err != nil {
 		return false, err
@@ -336,14 +353,25 @@ func DetectAndRebuildIndex(ctx context.Context, projectRoot string, proj domain.
 }
 
 // backupIndexFile copies the current index file into a timestamped backup in .gcw/backups.
-func backupIndexFile(indexPath string) {
+// Returns nil if the source index does not exist. Best-effort, but errors are reported.
+func backupIndexFile(indexPath string) error {
 	bdir := filepath.Join(filepath.Dir(indexPath), "backups")
-	_ = os.MkdirAll(bdir, 0o755)
+	if err := os.MkdirAll(bdir, 0o755); err != nil {
+		return fmt.Errorf("mkdir backups: %w", err)
+	}
 	stamp := time.Now().Format("20060102-150405")
 	bak := filepath.Join(bdir, fmt.Sprintf("%s.%s.bak", filepath.Base(indexPath), stamp))
-	if data, err := os.ReadFile(indexPath); err == nil {
-		_ = os.WriteFile(bak, data, 0o644)
+	data, err := os.ReadFile(indexPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // nothing to back up
+		}
+		return fmt.Errorf("read index for backup: %w", err)
 	}
+	if err := os.WriteFile(bak, data, 0o644); err != nil {
+		return fmt.Errorf("write backup: %w", err)
+	}
+	return nil
 }
 
 // stringsTrim is a tiny helper to avoid importing strings here just for TrimSpace.

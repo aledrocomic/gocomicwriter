@@ -45,6 +45,7 @@ import (
 	"gocomicwriter/internal/script"
 	"gocomicwriter/internal/storage"
 	"gocomicwriter/internal/stylepack"
+	"gocomicwriter/internal/telemetry"
 	"gocomicwriter/internal/undo"
 	"gocomicwriter/internal/vector"
 	"gocomicwriter/internal/version"
@@ -55,6 +56,11 @@ func Run(projectDir string) error {
 	applog.Init(applog.FromEnv())
 	l := applog.WithComponent("ui")
 	l.Info("starting UI")
+	// Initialize telemetry (opt-in via env). This is non-blocking and safe when disabled.
+	telemetry.InitDefault()
+	if telemetry.Enabled() {
+		telemetry.Event("app_start", map[string]any{"ui": "fyne"})
+	}
 
 	var ph *storage.ProjectHandle
 	defer func() { crash.Recover(ph) }()
@@ -2370,6 +2376,17 @@ func openProject(dir string, ph **storage.ProjectHandle, w fyne.Window, l *slog.
 	*ph = h
 	w.SetTitle(fmt.Sprintf("Go Comic Writer — %s", h.Project.Name))
 	status.SetText(fmt.Sprintf("Opened project: %s", abs))
+	// Anonymous telemetry event (no PII): include basic project stats only.
+	if telemetry.Enabled() {
+		issueCount := len(h.Project.Issues)
+		pageCount := 0
+		if issueCount > 0 {
+			for _, iss := range h.Project.Issues {
+				pageCount += len(iss.Pages)
+			}
+		}
+		telemetry.Event("project_open", map[string]any{"issues": issueCount, "pages": pageCount})
+	}
 	return nil
 }
 
