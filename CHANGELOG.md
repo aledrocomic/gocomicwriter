@@ -6,6 +6,14 @@ The format is based on Keep a Changelog (https://keepachangelog.com/en/1.1.0/),
 and this project adheres to Semantic Versioning. This is a pre-release
 (0.x) and APIs may change at any time.
 
+## [2025.12-Beta1] - 2025-10-02
+
+### Added
+- Cross-platform builds and installers.
+- Crash reporting and opt-in telemetry (anonymous usage metrics).
+- Documentation PDF with tutorials and templates (see docs/tutorials_and_templates.md; build via scripts/build_docs.ps1 → docs/gocomicwriter_tutorials_templates.pdf).
+- Added additional unit tests to achieve a higher test coverage
+
 ## [0.10.0-dev] - 2025-10-01
 
 ### Added
