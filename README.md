@@ -16,6 +16,7 @@ This repository provides the Go Comic Writer desktop app and backend server, an 
 - Install and quick start
 - Usage
 - Backend (gcwserver) — run locally
+- How-to: Deploy gcwserver on AWS EC2 (Debian) with GoLand 2025.2 — docs/deploy_gcwserver_aws_ec2_debian_goland_2025_2.md
 - Common commands (scripts)
 - Logging and environment variables
 - Project manifest (comic.json) and schema
@@ -264,6 +265,37 @@ Examples:
 - PowerShell: `$env:GCW_LOG_LEVEL='debug'; go run -tags fyne ./cmd/gocomicwriter`
 - Bash: `GCW_LOG_FORMAT=json GCW_LOG_FILE=gcw.log go run -tags fyne ./cmd/gocomicwriter`
 
+## Configuration and Settings
+The desktop app now includes a Settings dialog (Edit → Settings…) backed by a typed configuration file and secure storage for secrets.
+
+- Where the user config file is stored:
+  - Windows: %AppData%\GoComicWriter\config.yaml
+  - macOS: ~/Library/Application Support/GoComicWriter/config.yaml
+  - Linux: ~/.config/gocomicwriter/config.yaml
+- Precedence of configuration sources (highest first):
+  1) OS environment variables (GCW_*) — read-only overrides
+  2) User config file (editable via Settings)
+  3) Application defaults
+- Current keys (config.yaml):
+  - general.telemetry_opt_in: true|false (anonymous metrics opt-in; off by default)
+  - backend.base_url: e.g., http://localhost:8080
+  - backend.timeout_ms: request timeout in milliseconds (default 15000)
+  - backend.tls_insecure: true|false — skip TLS certificate verification (not recommended)
+- Environment variable mapping (overrides):
+  - GCW_TELEMETRY_OPT_IN → general.telemetry_opt_in
+  - GCW_BACKEND_URL → backend.base_url
+  - GCW_BACKEND_TIMEOUT_MS → backend.timeout_ms
+  - GCW_TLS_INSECURE → backend.tls_insecure
+- Secrets: Backend access tokens are stored in the OS keychain and are not written to config.yaml.
+- In the Settings dialog, if a field is overridden by an environment variable, an indicator is shown next to the field label.
+- The dialog includes a "Test connection" button that pings the backend’s /healthz endpoint using your Base URL, timeout, TLS setting, and optional token. Results are displayed inline.
+- Changes to telemetry opt-in take effect immediately; other settings generally apply without restart where possible.
+- Additional coverage in Settings:
+  - Logging: configure GCW_LOG_LEVEL, GCW_LOG_FORMAT, GCW_LOG_SOURCE, and GCW_LOG_FILE. If a GCW_LOG_* env var is set, the UI shows it as an override; otherwise, changes apply immediately by re-initializing the logger.
+  - Server features: toggle the Server menu (feature flag) via GCW_ENABLE_SERVER. If the environment variable is set, the UI shows it as an override; otherwise, the toggle is persisted in the user config and takes effect on next app menu rebuild (typically next launch).
+  - CGO: shows CGO_ENABLED as a read-only informational field (build-time/runtime env; the UI cannot change it).
+  - Environment overview: a dialog lists all environment variables referenced in this README, grouped by category (Logging, Desktop app, Telemetry/Crash, Feature flags, Server-only, Toolchain), showing current values and marking server-only items.
+
 ## Feature flags
 The app includes a few early, opt-in features that are hidden by default and can be enabled via environment variables.
 
@@ -412,6 +444,17 @@ Key environment variables (see .env.example)
 Notes
 - docker-compose.yml includes an example Postgres 17 service and an optional MinIO service. A containerized gcwserver service is provided as commented instructions within the file; adapt if you want to run the server inside Docker.
 - For production, configure TLS and switch `GCW_AUTH_MODE` to `static`, provision users, and protect token issuance with the admin API key.
+- Multi-user database sharing: endpoints are automatically scoped by user membership. A user only sees and can query projects they belong to via `project_members`.
+  - Recommended (Desktop UI): Use Server → “Grant Project Access…” in gocomicwriter to provision a user (by email) and grant a role on a selected project. In `static` auth mode you must provide the Admin API Key in the dialog.
+  - Advanced (SQL, optional): You can still perform the steps manually if preferred:
+    1. Ensure the user exists (static mode usually provisions via `/api/auth/token`):
+       - `INSERT INTO users(email, display_name) VALUES('alice@example.com','Alice') ON CONFLICT (email) DO NOTHING;`
+    2. Add membership:
+       - `INSERT INTO project_members(user_id, project_id, role)
+          SELECT u.id, p.id, 'owner'
+          FROM users u, projects p
+          WHERE u.email='alice@example.com' AND p.slug='my-project';`
+  - In `dev` auth mode, unknown users are auto-provisioned on first request, but membership still must be created (or granted via the dialog) to see projects.
 
 
 ## Repository layout

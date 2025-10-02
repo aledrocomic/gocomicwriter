@@ -14,12 +14,14 @@ package ui
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"image/color"
 	"io/fs"
 	"log/slog"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -38,6 +40,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"gocomicwriter/internal/backend"
+	"gocomicwriter/internal/config"
 	"gocomicwriter/internal/crash"
 	"gocomicwriter/internal/domain"
 	"gocomicwriter/internal/export"
@@ -56,10 +59,48 @@ func Run(projectDir string) error {
 	applog.Init(applog.FromEnv())
 	l := applog.WithComponent("ui")
 	l.Info("starting UI")
-	// Initialize telemetry (opt-in via env). This is non-blocking and safe when disabled.
-	telemetry.InitDefault()
+	// Initialize config and telemetry (env overrides user config).
+	appCfg, backendToken, _ := config.Load()
+	tCfg := telemetry.FromEnv()
+	if strings.TrimSpace(os.Getenv("GCW_TELEMETRY_OPT_IN")) == "" {
+		tCfg.OptIn = appCfg.General.TelemetryOptIn
+	}
+	telemetry.NewDefault(tCfg)
 	if telemetry.Enabled() {
 		telemetry.Event("app_start", map[string]any{"ui": "fyne"})
+	}
+
+	// Apply persisted logging settings unless overridden by environment
+	{
+		effLevel := strings.TrimSpace(os.Getenv("GCW_LOG_LEVEL"))
+		if effLevel == "" {
+			if strings.TrimSpace(appCfg.Logging.Level) != "" {
+				effLevel = strings.ToLower(strings.TrimSpace(appCfg.Logging.Level))
+			} else {
+				effLevel = "info"
+			}
+		}
+		effFormat := strings.TrimSpace(os.Getenv("GCW_LOG_FORMAT"))
+		if effFormat == "" {
+			if strings.TrimSpace(appCfg.Logging.Format) != "" {
+				effFormat = strings.ToLower(strings.TrimSpace(appCfg.Logging.Format))
+			} else {
+				effFormat = "console"
+			}
+		}
+		var useSource bool
+		if v := strings.TrimSpace(os.Getenv("GCW_LOG_SOURCE")); v != "" {
+			ls := strings.ToLower(v)
+			useSource = (ls == "1" || ls == "true" || ls == "on" || ls == "yes")
+		} else {
+			useSource = appCfg.Logging.Source
+		}
+		effFile := strings.TrimSpace(os.Getenv("GCW_LOG_FILE"))
+		if effFile == "" {
+			effFile = strings.TrimSpace(appCfg.Logging.File)
+		}
+		applog.Init(applog.Options{Level: effLevel, Format: effFormat, AddSource: useSource, File: effFile})
+		l = applog.WithComponent("ui")
 	}
 
 	var ph *storage.ProjectHandle
@@ -1259,7 +1300,10 @@ func Run(projectDir string) error {
 	// Server integration (feature-flagged) helpers
 	serverFeatureEnabled := func() bool {
 		v := strings.ToLower(strings.TrimSpace(os.Getenv("GCW_ENABLE_SERVER")))
-		return v == "1" || v == "true" || v == "on"
+		if v != "" {
+			return v == "1" || v == "true" || v == "on" || v == "yes"
+		}
+		return appCfg.General.EnableServer
 	}
 
 	showServerBrowserWindow := func(client *backend.Client) {
@@ -1394,6 +1438,86 @@ func Run(projectDir string) error {
 			prefs.SetString("server.token", tok)
 			cl := backend.NewClient(base, tok)
 			showServerBrowserWindow(cl)
+		}, w)
+		form.Show()
+	}
+
+	showGrantAccessDialog := func() {
+		base := strings.TrimSpace(prefs.StringWithFallback("server.url", ""))
+		tok := strings.TrimSpace(prefs.StringWithFallback("server.token", ""))
+		if base == "" || tok == "" {
+			dialog.ShowInformation("Server", "Connect to the server first via Server → Connect to Server…", w)
+			return
+		}
+		cl := backend.NewClient(base, tok)
+		cl.AdminAPIKey = prefs.StringWithFallback("server.admin_key", "")
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		plist, err := cl.ListProjects(ctx)
+		if err != nil {
+			dialog.ShowError(err, w)
+			return
+		}
+		type projOpt struct {
+			Label string
+			ID    int64
+		}
+		var opts []projOpt
+		var labels []string
+		for _, p := range plist {
+			lbl := fmt.Sprintf("%s (id:%d v%d)", p.Name, p.ID, p.Version)
+			labels = append(labels, lbl)
+			opts = append(opts, projOpt{Label: lbl, ID: p.ID})
+		}
+		var selProjectID int64
+		projectSelect := widget.NewSelect(labels, func(s string) {
+			for _, o := range opts {
+				if o.Label == s {
+					selProjectID = o.ID
+					break
+				}
+			}
+		})
+		if len(labels) > 0 {
+			projectSelect.SetSelected(labels[0])
+			selProjectID = opts[0].ID
+		}
+		emailEntry := widget.NewEntry()
+		emailEntry.SetPlaceHolder("alice@example.com")
+		nameEntry := widget.NewEntry()
+		nameEntry.SetPlaceHolder("Alice (optional)")
+		roleSelect := widget.NewSelect([]string{"owner", "editor", "viewer"}, nil)
+		roleSelect.SetSelected("owner")
+		adminKeyEntry := widget.NewPasswordEntry()
+		adminKeyEntry.SetPlaceHolder("Admin API Key (for static mode)")
+		if k := cl.AdminAPIKey; k != "" {
+			adminKeyEntry.SetText(k)
+		}
+		form := dialog.NewForm("Grant Project Access", "Grant", "Cancel", []*widget.FormItem{
+			widget.NewFormItem("Project", projectSelect),
+			widget.NewFormItem("Email", emailEntry),
+			widget.NewFormItem("Display Name", nameEntry),
+			widget.NewFormItem("Role", roleSelect),
+			widget.NewFormItem("Admin API Key", adminKeyEntry),
+		}, func(ok bool) {
+			if !ok {
+				return
+			}
+			if selProjectID == 0 || strings.TrimSpace(emailEntry.Text) == "" {
+				dialog.ShowInformation("Grant Project Access", "Please select a project and enter an email.", w)
+				return
+			}
+			cl.AdminAPIKey = strings.TrimSpace(adminKeyEntry.Text)
+			prefs.SetString("server.admin_key", cl.AdminAPIKey)
+			req := backend.GrantMembershipRequest{ProjectID: selProjectID, Email: strings.TrimSpace(emailEntry.Text), DisplayName: strings.TrimSpace(nameEntry.Text), Role: strings.TrimSpace(roleSelect.Selected)}
+			ctx2, cancel2 := context.WithTimeout(context.Background(), 8*time.Second)
+			defer cancel2()
+			res, err := cl.AdminGrantMembership(ctx2, req)
+			if err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			dialog.ShowInformation("Grant Project Access", fmt.Sprintf("Granted %s as %s on project %d.", res.User, res.Role, res.ProjectID), w)
 		}, w)
 		form.Show()
 	}
@@ -1859,6 +1983,258 @@ func Run(projectDir string) error {
 
 	fileMenu := fyne.NewMenu("File", homeItem, newItem, openItem, saveItem, fyne.NewMenuItemSeparator(), searchItem, rebuildIndexItem, importStylePackItem, exportStylePackItem, fyne.NewMenuItemSeparator(), closeProjItem)
 
+	// Settings dialog and menu item
+	showSettingsDialog := func() {
+		// Helper to suffix labels when an env override is present
+		withOverride := func(label, env string) string {
+			if strings.TrimSpace(os.Getenv(env)) != "" {
+				return label + " (overridden by " + env + ")"
+			}
+			return label
+		}
+
+		baseLabel := "Base URL"
+		if env, ok := config.EnvOverrideFor("backend.base_url"); ok {
+			baseLabel += " (overridden by " + env + ")"
+		}
+		baseURLEntry := widget.NewEntry()
+		baseURLEntry.SetText(appCfg.Backend.BaseURL)
+		timeoutEntry := widget.NewEntry()
+		timeoutEntry.SetText(fmt.Sprintf("%d", appCfg.Backend.TimeoutMs))
+		tlsChk := widget.NewCheck("Allow insecure TLS (skip certificate verification)", nil)
+		tlsChk.SetChecked(appCfg.Backend.TLSInsecure)
+		teleChk := widget.NewCheck("Enable anonymous telemetry (opt-in)", nil)
+		teleChk.SetChecked(appCfg.General.TelemetryOptIn)
+		tokenEntry := widget.NewPasswordEntry()
+		tokenEntry.SetPlaceHolder("Access token (leave blank to keep stored token)")
+
+		// Logging configuration (GCW_LOG_*) with env overrides; persist user-selected values to config
+		levels := []string{"debug", "info", "warn", "error"}
+		formats := []string{"console", "json"}
+		logLevel := strings.ToLower(strings.TrimSpace(os.Getenv("GCW_LOG_LEVEL")))
+		if logLevel == "" {
+			if strings.TrimSpace(appCfg.Logging.Level) != "" {
+				logLevel = strings.ToLower(strings.TrimSpace(appCfg.Logging.Level))
+			} else {
+				logLevel = "info"
+			}
+		}
+		logLevelSelect := widget.NewSelect(levels, nil)
+		logLevelSelect.SetSelected(logLevel)
+		logFormat := strings.ToLower(strings.TrimSpace(os.Getenv("GCW_LOG_FORMAT")))
+		if logFormat == "" {
+			if strings.TrimSpace(appCfg.Logging.Format) != "" {
+				logFormat = strings.ToLower(strings.TrimSpace(appCfg.Logging.Format))
+			} else {
+				logFormat = "console"
+			}
+		}
+		logFormatSelect := widget.NewSelect(formats, nil)
+		logFormatSelect.SetSelected(logFormat)
+		logSourceChk := widget.NewCheck("Include source in logs", nil)
+		if v := strings.TrimSpace(os.Getenv("GCW_LOG_SOURCE")); v != "" {
+			ls := strings.ToLower(v)
+			logSourceChk.SetChecked(ls == "1" || ls == "true" || ls == "on" || ls == "yes")
+		} else {
+			logSourceChk.SetChecked(appCfg.Logging.Source)
+		}
+		logFileEntry := widget.NewEntry()
+		logFileEntry.SetPlaceHolder("Path to log file (optional)")
+		if v := strings.TrimSpace(os.Getenv("GCW_LOG_FILE")); v != "" {
+			logFileEntry.SetText(v)
+		} else {
+			logFileEntry.SetText(strings.TrimSpace(appCfg.Logging.File))
+		}
+
+		// CGO status (read-only)
+		cgoVal := strings.TrimSpace(os.Getenv("CGO_ENABLED"))
+		if cgoVal == "" {
+			cgoVal = "(unset)"
+		}
+		cgoLabel := widget.NewLabel("CGO_ENABLED = " + cgoVal + " — build-time/env; read-only")
+
+		// Test connection button
+		resultLabel := widget.NewLabel("")
+		testBtn := widget.NewButton("Test connection", func() {
+			url := strings.TrimSpace(baseURLEntry.Text)
+			tok := strings.TrimSpace(tokenEntry.Text)
+			if tok == "" {
+				tok = backendToken
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: tlsChk.Checked}}
+			hc := &http.Client{Timeout: time.Duration(appCfg.Backend.TimeoutMs) * time.Millisecond, Transport: tr}
+			endpoint := strings.TrimRight(url, "/") + "/healthz"
+			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+			if tok != "" {
+				req.Header.Set("Authorization", "Bearer "+tok)
+			}
+			resp, err := hc.Do(req)
+			if err != nil {
+				resultLabel.SetText("Failed: " + err.Error())
+				return
+			}
+			defer resp.Body.Close()
+			var body struct{ Status, Version, Time string }
+			dec := json.NewDecoder(resp.Body)
+			_ = dec.Decode(&body)
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				if body.Status != "" {
+					resultLabel.SetText("OK: " + body.Status + " (" + body.Version + ")")
+				} else {
+					resultLabel.SetText("OK: " + resp.Status)
+				}
+			} else {
+				resultLabel.SetText("Failed: " + resp.Status)
+			}
+		})
+
+		// Environment overview dialog
+		showEnvOverview := func() {
+			mkRow := func(name, note string) fyne.CanvasObject {
+				val := strings.TrimSpace(os.Getenv(name))
+				if val == "" {
+					val = "(unset)"
+				}
+				lbl := widget.NewLabel(name + " = " + val)
+				if note != "" {
+					return container.NewVBox(lbl, widget.NewLabelWithStyle(note, fyne.TextAlignLeading, fyne.TextStyle{Italic: true}))
+				}
+				return lbl
+			}
+			// Grouped containers
+			loggingBox := container.NewVBox(
+				widget.NewLabelWithStyle("Logging", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+				mkRow("GCW_LOG_LEVEL", ""),
+				mkRow("GCW_LOG_FORMAT", ""),
+				mkRow("GCW_LOG_SOURCE", ""),
+				mkRow("GCW_LOG_FILE", ""),
+			)
+			appBox := container.NewVBox(
+				widget.NewLabelWithStyle("Desktop app", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+				mkRow("GCW_TELEMETRY_OPT_IN", ""),
+				mkRow("GCW_BACKEND_URL", ""),
+				mkRow("GCW_BACKEND_TIMEOUT_MS", ""),
+				mkRow("GCW_TLS_INSECURE", ""),
+				mkRow("GCW_ENABLE_SERVER", "Feature flag for Server menu"),
+			)
+			teleBox := container.NewVBox(
+				widget.NewLabelWithStyle("Telemetry & crash", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+				mkRow("GCW_TELEMETRY_URL", "events endpoint"),
+				mkRow("GCW_CRASH_UPLOAD_URL", "crash upload endpoint"),
+				mkRow("GCW_TELEMETRY_TIMEOUT_MS", "ms"),
+				mkRow("GCW_TELEMETRY_DEBUG", "non-empty to enable debug"),
+			)
+			serverBox := container.NewVBox(
+				widget.NewLabelWithStyle("Server (gcwserver)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+				mkRow("GCW_PG_DSN", "server-only"),
+				mkRow("DATABASE_URL", "server-only"),
+				mkRow("ADDR", "server-only"),
+				mkRow("PORT", "server-only"),
+				mkRow("GCW_TLS_ENABLE", "server-only"),
+				mkRow("GCW_TLS_CERT_FILE", "server-only"),
+				mkRow("GCW_TLS_KEY_FILE", "server-only"),
+				mkRow("GCW_AUTH_MODE", "server-only"),
+				mkRow("GCW_AUTH_SECRET", "server-only"),
+				mkRow("GCW_ADMIN_API_KEY", "server-only"),
+				mkRow("GCW_MINIO_ENDPOINT", "server-only"),
+				mkRow("GCW_OBJECT_HEALTH_URL", "server-only"),
+				mkRow("GCW_OBJECT_HEALTH_REQUIRED", "server-only"),
+			)
+			cgoBox := container.NewVBox(
+				widget.NewLabelWithStyle("Build/toolchain", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+				mkRow("CGO_ENABLED", "build-time/env; UI requires cgo when using Fyne"),
+			)
+			content := container.NewVScroll(container.NewVBox(loggingBox, widget.NewSeparator(), appBox, widget.NewSeparator(), teleBox, widget.NewSeparator(), serverBox, widget.NewSeparator(), cgoBox))
+			dialog.ShowCustom("Environment Variables", "Close", content, w)
+		}
+		envBtn := widget.NewButton("Environment variables…", showEnvOverview)
+
+		// Feature flag: Server menu
+		serverChk := widget.NewCheck("Enable Server features (Server menu)", nil)
+		serverChk.SetChecked(appCfg.General.EnableServer)
+
+		items := []*widget.FormItem{
+			// Backend
+			widget.NewFormItem(baseLabel, baseURLEntry),
+			widget.NewFormItem("Timeout (ms)", timeoutEntry),
+			widget.NewFormItem("TLS", tlsChk),
+			widget.NewFormItem(withOverride("Server features", "GCW_ENABLE_SERVER"), serverChk),
+			widget.NewFormItem("Telemetry", teleChk),
+			widget.NewFormItem("Access token", tokenEntry),
+			widget.NewFormItem("", container.NewHBox(testBtn, resultLabel)),
+			// Logging
+			widget.NewFormItem(withOverride("Log level", "GCW_LOG_LEVEL"), logLevelSelect),
+			widget.NewFormItem(withOverride("Log format", "GCW_LOG_FORMAT"), logFormatSelect),
+			widget.NewFormItem(withOverride("Log source", "GCW_LOG_SOURCE"), logSourceChk),
+			widget.NewFormItem(withOverride("Log file", "GCW_LOG_FILE"), logFileEntry),
+			// Toolchain
+			widget.NewFormItem("CGO", cgoLabel),
+			// Environment overview
+			widget.NewFormItem("", envBtn),
+		}
+		d := dialog.NewForm("Settings", "Save", "Cancel", items, func(ok bool) {
+			if !ok {
+				return
+			}
+			// Backend, feature flags & telemetry opt-in
+			appCfg.Backend.BaseURL = strings.TrimSpace(baseURLEntry.Text)
+			if ms, err := strconv.Atoi(strings.TrimSpace(timeoutEntry.Text)); err == nil && ms > 0 {
+				appCfg.Backend.TimeoutMs = ms
+			}
+			appCfg.Backend.TLSInsecure = tlsChk.Checked
+			appCfg.General.EnableServer = serverChk.Checked
+			appCfg.General.TelemetryOptIn = teleChk.Checked
+			// Persist logging selections
+			appCfg.Logging.Level = strings.ToLower(strings.TrimSpace(logLevelSelect.Selected))
+			appCfg.Logging.Format = strings.ToLower(strings.TrimSpace(logFormatSelect.Selected))
+			appCfg.Logging.Source = logSourceChk.Checked
+			appCfg.Logging.File = strings.TrimSpace(logFileEntry.Text)
+			if err := config.Save(appCfg, strings.TrimSpace(tokenEntry.Text)); err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			if strings.TrimSpace(tokenEntry.Text) != "" {
+				backendToken = strings.TrimSpace(tokenEntry.Text)
+			}
+			// Apply telemetry client with updated opt-in if env not overriding
+			tc := telemetry.FromEnv()
+			if strings.TrimSpace(os.Getenv("GCW_TELEMETRY_OPT_IN")) == "" {
+				tc.OptIn = appCfg.General.TelemetryOptIn
+			}
+			telemetry.NewDefault(tc)
+
+			// Apply logging changes, respecting env overrides
+			effectiveLevel := strings.TrimSpace(os.Getenv("GCW_LOG_LEVEL"))
+			if effectiveLevel == "" {
+				effectiveLevel = strings.TrimSpace(logLevelSelect.Selected)
+			}
+			effectiveFormat := strings.TrimSpace(os.Getenv("GCW_LOG_FORMAT"))
+			if effectiveFormat == "" {
+				effectiveFormat = strings.TrimSpace(logFormatSelect.Selected)
+			}
+			effectiveSource := strings.TrimSpace(os.Getenv("GCW_LOG_SOURCE"))
+			var useSource bool
+			if effectiveSource == "" {
+				useSource = logSourceChk.Checked
+			} else {
+				ls := strings.ToLower(effectiveSource)
+				useSource = (ls == "1" || ls == "true" || ls == "yes" || ls == "on")
+			}
+			effectiveFile := strings.TrimSpace(os.Getenv("GCW_LOG_FILE"))
+			if effectiveFile == "" {
+				effectiveFile = strings.TrimSpace(logFileEntry.Text)
+			}
+			applog.Init(applog.Options{Level: effectiveLevel, Format: effectiveFormat, AddSource: useSource, File: effectiveFile})
+
+			dialog.ShowInformation("Settings", "Saved.", w)
+		}, w)
+		d.Resize(fyne.NewSize(560, 0))
+		d.Show()
+	}
+	settingsItem := fyne.NewMenuItem("Settings…", func() { showSettingsDialog() })
+
 	// Edit menu (Undo/Redo)
 	undoMenuItem := fyne.NewMenuItem("Undo", func() {
 		if ph == nil {
@@ -1890,7 +2266,7 @@ func Run(projectDir string) error {
 			dialog.ShowInformation("Redo", "Nothing to redo.", w)
 		}
 	})
-	editMenu := fyne.NewMenu("Edit", undoMenuItem, redoMenuItem)
+	editMenu := fyne.NewMenu("Edit", undoMenuItem, redoMenuItem, fyne.NewMenuItemSeparator(), settingsItem)
 
 	// Issue menu with setup dialog
 	issueSetupItem := fyne.NewMenuItem("Issue Setup…", func() {
@@ -2317,7 +2693,8 @@ func Run(projectDir string) error {
 	menus := []*fyne.Menu{fileMenu, editMenu, issueMenu, insertMenu, exportMenu}
 	if serverFeatureEnabled() {
 		connectItem := fyne.NewMenuItem("Connect to Server…", func() { showServerConnectDialog() })
-		serverMenu := fyne.NewMenu("Server", connectItem)
+		grantItem := fyne.NewMenuItem("Grant Project Access…", func() { showGrantAccessDialog() })
+		serverMenu := fyne.NewMenu("Server", connectItem, grantItem)
 		menus = append(menus, serverMenu)
 	}
 	menus = append(menus, aboutMenu)
