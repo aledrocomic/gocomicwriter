@@ -37,6 +37,7 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
 	fstorage "fyne.io/fyne/v2/storage"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"gocomicwriter/internal/backend"
@@ -1107,6 +1108,14 @@ func Run(projectDir string) error {
 	scriptPane := container.NewBorder(scriptControls, scriptErr, nil, nil, scriptSplit)
 
 	// Bible management UI
+	// helper to compute min width for at least 20 characters
+	calcEntryMinWidth := func() float32 {
+		// Use a wide glyph to approximate 20 characters width
+		w20 := fyne.MeasureText(strings.Repeat("M", 20), theme.TextSize(), fyne.TextStyle{}).Width
+		// add some padding
+		return w20 + 24
+	}
+
 	charList = widget.NewList(
 		func() int { return len(charNames) },
 		func() fyne.CanvasObject { return widget.NewLabel("") },
@@ -1145,6 +1154,8 @@ func Run(projectDir string) error {
 		status.SetText("Character added.")
 	}
 	addCharEntry.OnSubmitted = func(s string) { addChar(s) }
+	// ensure entry has room for at least 20 characters
+	charEntryWrap := container.NewGridWrap(fyne.NewSize(calcEntryMinWidth(), addCharEntry.MinSize().Height), addCharEntry)
 	addCharBtn := widget.NewButton("Add", func() { addChar(addCharEntry.Text) })
 	delCharBtn := widget.NewButton("Delete", func() {
 		if ph == nil || selectedChar < 0 || selectedChar >= len(ph.Project.Bible.Characters) {
@@ -1162,7 +1173,14 @@ func Run(projectDir string) error {
 		refreshBible()
 		status.SetText("Character deleted.")
 	})
-	charBox := container.NewVBox(widget.NewLabel("Characters"), charList, container.NewHBox(addCharEntry, addCharBtn, delCharBtn))
+	// Layout: label, list, delete button below list, entry full-width, add button below entry
+	charBox := container.NewVBox(
+		widget.NewLabel("Characters"),
+		charList,
+		container.NewHBox(delCharBtn),
+		charEntryWrap,
+		container.NewHBox(addCharBtn),
+	)
 
 	// Locations
 	locList = widget.NewList(
@@ -1203,6 +1221,8 @@ func Run(projectDir string) error {
 		status.SetText("Location added.")
 	}
 	addLocEntry.OnSubmitted = func(s string) { addLocation(s) }
+	// ensure entry has room for at least 20 characters
+	locEntryWrap := container.NewGridWrap(fyne.NewSize(calcEntryMinWidth(), addLocEntry.MinSize().Height), addLocEntry)
 	addLocBtn := widget.NewButton("Add", func() { addLocation(addLocEntry.Text) })
 	delLocBtn := widget.NewButton("Delete", func() {
 		if ph == nil || selectedLoc < 0 || selectedLoc >= len(ph.Project.Bible.Locations) {
@@ -1220,7 +1240,14 @@ func Run(projectDir string) error {
 		refreshBible()
 		status.SetText("Location deleted.")
 	})
-	locBox := container.NewVBox(widget.NewLabel("Locations"), locList, container.NewHBox(addLocEntry, addLocBtn, delLocBtn))
+	// Layout: label, list, delete button below list, entry full-width, add button below entry
+	locBox := container.NewVBox(
+		widget.NewLabel("Locations"),
+		locList,
+		container.NewHBox(delLocBtn),
+		locEntryWrap,
+		container.NewHBox(addLocBtn),
+	)
 
 	// Tags
 	tagList = widget.NewList(
@@ -1261,6 +1288,8 @@ func Run(projectDir string) error {
 		status.SetText("Tag added.")
 	}
 	addTagEntry.OnSubmitted = func(s string) { addTag(s) }
+	// ensure entry has room for at least 20 characters
+	tagEntryWrap := container.NewGridWrap(fyne.NewSize(calcEntryMinWidth(), addTagEntry.MinSize().Height), addTagEntry)
 	addTagBtn := widget.NewButton("Add", func() { addTag(addTagEntry.Text) })
 	delTagBtn := widget.NewButton("Delete", func() {
 		if ph == nil || selectedTag < 0 || selectedTag >= len(ph.Project.Bible.Tags) {
@@ -1278,7 +1307,13 @@ func Run(projectDir string) error {
 		refreshBible()
 		status.SetText("Tag deleted.")
 	})
-	tagBox := container.NewVBox(widget.NewLabel("Tags"), tagList, container.NewHBox(addTagEntry, addTagBtn, delTagBtn))
+	tagBox := container.NewVBox(
+		widget.NewLabel("Tags"),
+		tagList,
+		container.NewHBox(delTagBtn),
+		tagEntryWrap,
+		container.NewHBox(addTagBtn),
+	)
 
 	biblePane := container.NewGridWithColumns(3, charBox, locBox, tagBox)
 	refreshBible()
