@@ -235,3 +235,19 @@ func (c *Client) Search(ctx context.Context, projectID int64, q storage.SearchQu
 	}
 	return res, nil
 }
+
+// HealthStatus represents the /healthz response from the server.
+type HealthStatus struct {
+	Status  string `json:"status"`
+	Version string `json:"version"`
+	Time    string `json:"time"`
+}
+
+// Health pings the server health endpoint.
+func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
+	var hs HealthStatus
+	if err := c.doJSON(ctx, http.MethodGet, "/healthz", &hs); err != nil {
+		return nil, err
+	}
+	return &hs, nil
+}

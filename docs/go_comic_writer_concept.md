@@ -293,6 +293,7 @@ Alignment with Definition of Done:
 - [✓] Documentation PDF with tutorials and templates (see docs/tutorials_and_templates.md; build via scripts/build_docs.ps1 → docs/gocomicwriter_tutorials_templates.pdf).
 
 ### Phase 9 — QA & Performance
+- [✓] Added a settings dialog to gocomicwriter to enable/disable environment variables.
 - [ ] Performance benchmarks on large issues; profiling and optimizations.
 - [ ] Automated validation: manifest schema, font embedding checks.
 - [ ] Accessibility audit and keyboard shortcut coverage.
