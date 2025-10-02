@@ -10,6 +10,7 @@
 package crash
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 	"os"
@@ -20,8 +21,12 @@ import (
 
 	applog "gocomicwriter/internal/log"
 	"gocomicwriter/internal/storage"
+	"gocomicwriter/internal/telemetry"
 	"gocomicwriter/internal/version"
 )
+
+// exitFn is used to allow testing of Recover without terminating the test process.
+var exitFn = os.Exit
 
 // Recover captures a panic, logs an error with stacktrace,
 // writes an error report file, and attempts a crash-safe autosave
@@ -50,7 +55,7 @@ func Recover(ph *storage.ProjectHandle) {
 			l.Error("failed to write version info to stderr", slog.Any("err", err))
 		}
 		// Exit with a non-zero code to indicate failure in CLI context.
-		os.Exit(2)
+		exitFn(2)
 	}
 }
 
@@ -74,17 +79,25 @@ func writeReport(ph *storage.ProjectHandle, panicVal any, stack []byte) (string,
 		}
 	}()
 
-	_, _ = fmt.Fprintf(f, "Go Comic Writer Crash Report\n")
-	_, _ = fmt.Fprintf(f, "Timestamp: %s\n", time.Now().Format(time.RFC3339))
-	_, _ = fmt.Fprintf(f, "Version: %s\n", version.String())
-	_, _ = fmt.Fprintf(f, "OS/Arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	var buf bytes.Buffer
+	_, _ = fmt.Fprintf(&buf, "Go Comic Writer Crash Report\n")
+	_, _ = fmt.Fprintf(&buf, "Timestamp: %s\n", time.Now().Format(time.RFC3339))
+	_, _ = fmt.Fprintf(&buf, "Version: %s\n", version.String())
+	_, _ = fmt.Fprintf(&buf, "OS/Arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	if ph != nil {
-		_, _ = fmt.Fprintf(f, "ProjectRoot: %s\n", ph.Root)
-		_, _ = fmt.Fprintf(f, "Manifest: %s\n", ph.ManifestPath)
+		_, _ = fmt.Fprintf(&buf, "ProjectRoot: %s\n", ph.Root)
+		_, _ = fmt.Fprintf(&buf, "Manifest: %s\n", ph.ManifestPath)
 	}
-	_, _ = fmt.Fprintf(f, "\nPanic: %v\n\n", panicVal)
-	_, _ = fmt.Fprintf(f, "Stack:\n%s\n", string(stack))
+	_, _ = fmt.Fprintf(&buf, "\nPanic: %v\n\n", panicVal)
+	_, _ = fmt.Fprintf(&buf, "Stack:\n%s\n", string(stack))
 
+	// write to file
+	if _, err := f.Write(buf.Bytes()); err != nil {
+		return path, err
+	}
 	_ = f.Sync()
+
+	// optionally upload anonymized crash report (opt-in via env)
+	telemetry.UploadCrash(buf.Bytes())
 	return path, nil
 }
