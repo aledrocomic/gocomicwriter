@@ -22,6 +22,8 @@ jobs:
       - name: 'Qodana Scan'
         uses: JetBrains/qodana-action@v2025.2
         with:
+          args:
+            --linter,qodana-go
           pr-mode: false
         env:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN_1046367980 }}
