@@ -73,7 +73,7 @@ const (
 	EnvBackendTLSInsec  = "GCW_TLS_INSECURE"
 	EnvTelemetryOptIn   = "GCW_TELEMETRY_OPT_IN"
 	EnvEnableServer     = "GCW_ENABLE_SERVER"
-	// Logging envs
+	// EnvLogLevel Logging envs
 	EnvLogLevel  = "GCW_LOG_LEVEL"
 	EnvLogFormat = "GCW_LOG_FORMAT"
 	EnvLogSource = "GCW_LOG_SOURCE"

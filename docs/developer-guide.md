@@ -1,5 +1,8 @@
 # Go Comic Writer — Developer Guide
 
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/aledrocomic/gocomicwriter)
+
 Audience: contributors, integrators, and maintainers working on the Go Comic Writer codebase.
 
 This guide complements the README (user‑oriented quick start) and the product concept/roadmap in docs/go_comic_writer_concept.md. It focuses on developer setup, architecture, coding/testing conventions, build tags, CI/CD, and release flow.

@@ -1,5 +1,7 @@
 # Go Comic Writer
 
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/aledrocomic/gocomicwriter)
 [![Qodana](https://github.com/aledrocomic/gocomicwriter/actions/workflows/qodana_code_quality.yml/badge.svg)](https://github.com/aledrocomic/gocomicwriter/actions/workflows/qodana_code_quality.yml)
 [![Dependabot Updates](https://github.com/aledrocomic/gocomicwriter/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/aledrocomic/gocomicwriter/actions/workflows/dependabot/dependabot-updates)
 [![CodeQL](https://github.com/aledrocomic/gocomicwriter/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/aledrocomic/gocomicwriter/actions/workflows/github-code-scanning/codeql)
