@@ -1,0 +1,6 @@
+/.github/CODEOWNERS @aledrocomic
+/.github/ @aledrocomic
+*.go @aledrocomic
+*.sql @aledrocomic
+*.md @aledrocomic
+*.yml @aledrocomic
