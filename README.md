@@ -1,5 +1,11 @@
 # Go Comic Writer
 
+[![Qodana](https://github.com/aledrocomic/gocomicwriter/actions/workflows/qodana_code_quality.yml/badge.svg)](https://github.com/aledrocomic/gocomicwriter/actions/workflows/qodana_code_quality.yml)
+[![Dependabot Updates](https://github.com/aledrocomic/gocomicwriter/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/aledrocomic/gocomicwriter/actions/workflows/dependabot/dependabot-updates)
+[![CodeQL](https://github.com/aledrocomic/gocomicwriter/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/aledrocomic/gocomicwriter/actions/workflows/github-code-scanning/codeql)
+[![CI](https://github.com/aledrocomic/gocomicwriter/actions/workflows/ci.yml/badge.svg)](https://github.com/aledrocomic/gocomicwriter/actions/workflows/ci.yml)
+[![Go](https://github.com/aledrocomic/gocomicwriter/actions/workflows/go.yml/badge.svg?branch=master)](https://github.com/aledrocomic/gocomicwriter/actions/workflows/go.yml)
+
 A Go-powered project aiming to become a writing, planning, and lettering toolchain for comics — from script to precisely lettered pages — with reliable exports for print and screen.
 
 This repository provides the Go Comic Writer desktop app and backend server, an evolving domain model, and a public JSON schema for the project manifest. The product concept and roadmap live in docs/go_comic_writer_concept.md. For the 2.x plan and tasks, see docs/go_comic_writer_concept_2x.md.
