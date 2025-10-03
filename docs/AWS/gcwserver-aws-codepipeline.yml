@@ -11,7 +11,10 @@ Metadata:
     Requirements and assumptions:
       - Deploy this stack in eu-west-1.
       - Your EC2 instance(s) are already launched, have the CodeDeploy agent installed,
-        and are tagged to match EC2TagKey/EC2TagValue.
+        and are tagged to match EC2TagKey/EC2TagValue. Alternatively, you can target an Auto Scaling Group
+        by setting the AutoScalingGroupName parameter.
+      - If you run instances in private subnets behind an ALB, set TargetGroupName to enable
+        CodeDeploy traffic control (instances will be deregistered from the target group during deploy and re-registered after).
       - The EC2 instance role allows:
           * s3:GetObject on this stack's artifact bucket
           * ssm:GetParameter (and optionally with decryption)
@@ -56,6 +59,17 @@ Parameters:
     Type: String
     Default: gcwserver
     Description: EC2 tag value used by CodeDeploy DeploymentGroup to select instances.
+
+  # Optional: integrate with Auto Scaling and an ALB Target Group for in-place deployments
+  AutoScalingGroupName:
+    Type: String
+    Default: ''
+    Description: Optional Auto Scaling Group name to target for deployments (leave empty to use EC2 tags instead).
+
+  TargetGroupName:
+    Type: String
+    Default: ''
+    Description: Optional ALB Target Group name for traffic control during deployments (in-place).
 
   # Database connection string (no RDS is created)
   ConnectionString:
@@ -108,6 +122,8 @@ Conditions:
   HasAdminApiKey: !Not [!Equals [!Ref AdminApiKey, '']]
   HasAuthSecret: !Not [!Equals [!Ref AuthSecret, '']]
   HasAddr: !Not [!Equals [!Ref Addr, '']]
+  HasASG: !Not [!Equals [!Ref AutoScalingGroupName, '']]
+  HasTargetGroup: !Not [!Equals [!Ref TargetGroupName, '']]
 
 Resources:
   PipelineArtifactBucket:
@@ -462,17 +478,29 @@ Resources:
       DeploymentGroupName: !Sub ${ProjectName}-dg
       ServiceRoleArn: !GetAtt CodeDeployServiceRole.Arn
       DeploymentConfigName: CodeDeployDefault.OneAtATime
-      Ec2TagFilters:
-        - Key: !Ref EC2TagKey
-          Value: !Ref EC2TagValue
-          Type: KEY_AND_VALUE
+      Ec2TagFilters: !If 
+        - HasASG
+        - !Ref 'AWS::NoValue'
+        - 
+          - Key: !Ref EC2TagKey
+            Value: !Ref EC2TagValue
+            Type: KEY_AND_VALUE
+      AutoScalingGroups: !If 
+        - HasASG
+        - [ !Ref AutoScalingGroupName ]
+        - !Ref 'AWS::NoValue'
+      LoadBalancerInfo: !If 
+        - HasTargetGroup
+        - { TargetGroupInfoList: [ { Name: !Ref TargetGroupName } ] }
+        - !Ref 'AWS::NoValue'
       AutoRollbackConfiguration:
         Enabled: true
         Events:
           - DEPLOYMENT_FAILURE
-      DeploymentStyle:
-        DeploymentType: IN_PLACE
-        DeploymentOption: WITHOUT_TRAFFIC_CONTROL
+      DeploymentStyle: !If
+        - HasTargetGroup
+        - { DeploymentType: IN_PLACE, DeploymentOption: WITH_TRAFFIC_CONTROL }
+        - { DeploymentType: IN_PLACE, DeploymentOption: WITHOUT_TRAFFIC_CONTROL }
 
   Pipeline:
     Type: AWS::CodePipeline::Pipeline
