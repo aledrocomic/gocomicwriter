@@ -408,7 +408,11 @@ func BuildIndexIfEmpty(ctx context.Context, projectRoot string, proj domain.Proj
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() {
+		if cerr := db.Close(); cerr != nil {
+			applog.WithComponent("storage").Warn("db close failed", slog.Any("err", cerr))
+		}
+	}()
 	// Check if documents has any rows
 	var cnt int
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM documents;").Scan(&cnt); err != nil {
@@ -427,7 +431,11 @@ func UpdateIndex(ctx context.Context, projectRoot string, proj domain.Project) e
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() {
+		if cerr := db.Close(); cerr != nil {
+			applog.WithComponent("storage").Warn("db close failed", slog.Any("err", cerr))
+		}
+	}()
 	return rebuildDocumentsFromProject(ctx, db, projectRoot, proj)
 }
 
@@ -438,7 +446,11 @@ func RebuildIndex(ctx context.Context, projectRoot string, proj domain.Project) 
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() {
+		if cerr := db.Close(); cerr != nil {
+			applog.WithComponent("storage").Warn("db close failed", slog.Any("err", cerr))
+		}
+	}()
 	// Drop core tables inside a transaction and recreate schema
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -530,8 +542,7 @@ func rebuildDocumentsFromProject(ctx context.Context, db *sql.DB, projectRoot st
 		}
 	}
 	// Issues/pages/panels/balloons
-	for issIdx, iss := range proj.Issues {
-		_ = issIdx // reserved for multi-issue future
+	for _, iss := range proj.Issues {
 		for _, pg := range iss.Pages {
 			pageID := int64(pg.Number)
 			// Panel notes and balloon texts
@@ -580,7 +591,11 @@ func rebuildDocumentsFromProject(ctx context.Context, db *sql.DB, projectRoot st
 		_ = tx.Rollback()
 		return fmt.Errorf("prepare insert: %w", err)
 	}
-	defer ins.Close()
+	defer func() {
+		if cerr := ins.Close(); cerr != nil {
+			applog.WithComponent("storage").Warn("stmt close failed", slog.Any("err", cerr))
+		}
+	}()
 	for _, r := range rows {
 		if _, err := ins.ExecContext(ctx, r.typeStr, r.path, r.pageID, r.characterID, r.text); err != nil {
 			_ = tx.Rollback()

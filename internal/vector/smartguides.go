@@ -57,9 +57,9 @@ func ComputeSmartGuides(moving Rect, anchors []Anchor, opts SnapOptions) (Rect, 
 	var guides []GuideLine
 
 	// Horizontal (X) snapping candidates: left, centerX, right
-	bestDX, bestDXDist, bestDXGuide := float32(0), float32(+1e9), (GuideLine{})
+	bestDX, bestDXDist, bestDXGuide := float32(0), float32(+1e9), GuideLine{}
 	// Vertical (Y) snapping: top, centerY, bottom
-	bestDY, bestDYDist, bestDYGuide := float32(0), float32(+1e9), (GuideLine{})
+	bestDY, bestDYDist, bestDYGuide := float32(0), float32(+1e9), GuideLine{}
 
 	mxL, mxR, mxT, mxB, mxCX, mxCY := moving.X, moving.X+moving.W, moving.Y, moving.Y+moving.H, moving.X+moving.W/2, moving.Y+moving.H/2
 

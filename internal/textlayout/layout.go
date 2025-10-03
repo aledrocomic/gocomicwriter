@@ -13,9 +13,10 @@ package textlayout
 // deterministic interfaces that can be implemented with different engines.
 
 import (
+	"unicode/utf8"
+
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/basicfont"
-	"unicode/utf8"
 )
 
 // FontSpec describes a requested font.

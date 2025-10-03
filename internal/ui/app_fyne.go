@@ -1002,7 +1002,7 @@ func Run(projectDir string) error {
 		totalBeats := 0
 		unmappedBeats := 0
 		outlineItems = outlineItems[:0]
-		for si, scn := range sc.Scenes {
+		for _, scn := range sc.Scenes {
 			st := strings.TrimSpace(scn.Title)
 			outlineItems = append(outlineItems, outlineItem{kind: "scene", display: "Scene: " + st})
 			for _, ln := range scn.Lines {
@@ -1025,7 +1025,7 @@ func Run(projectDir string) error {
 					if len(preview) > 60 {
 						preview = preview[:60] + "…"
 					}
-					id := storage.BeatIDFor(si, ln)
+					id := storage.BeatIDFor(ln)
 					display := "  [" + ln.Character + "] " + preview
 					if _, ok := mapped[id]; !ok {
 						// not mapped to any panel -> warn

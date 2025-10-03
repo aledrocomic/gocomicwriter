@@ -13,8 +13,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	gojsonschema "github.com/xeipuuv/gojsonschema"
 	"gocomicwriter/internal/domain"
+
+	"github.com/xeipuuv/gojsonschema"
 )
 
 func TestManifestConformsToSchema(t *testing.T) {

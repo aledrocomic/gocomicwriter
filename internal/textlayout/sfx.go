@@ -10,6 +10,7 @@ package textlayout
 
 import (
 	"gocomicwriter/internal/vector"
+
 	"golang.org/x/image/font"
 )
 
@@ -62,7 +63,7 @@ func (s SFXSpec) Layout(provider Provider) ([]GlyphPose, float32) {
 	face, _ := provider.Resolve(s.Font)
 	d := &font.Drawer{Face: face}
 	var poses []GlyphPose
-	var x float32 = s.StartOffset
+	var x = s.StartOffset
 	prev := rune(-1)
 	for _, r := range s.Text {
 		adv := measureRuneAdvance(d, prev, r)

@@ -873,12 +873,30 @@ func writeError(w http.ResponseWriter, status int, err error) {
 
 // isInvalidCatalog returns true if the error indicates the target database does not exist (SQLSTATE 3D000).
 func isInvalidCatalog(err error) bool {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		if pgErr.Code == "3D000" { // invalid_catalog_name
-			return true
+	// Walk the error chain (including joined errors) without relying on errors.As target typing rules.
+	for e := err; e != nil; {
+		if pe, ok := e.(*pgconn.PgError); ok {
+			if pe.Code == "3D000" { // invalid_catalog_name
+				return true
+			}
 		}
+		// Try single unwrap first.
+		if unwrapped := errors.Unwrap(e); unwrapped != nil {
+			e = unwrapped
+			continue
+		}
+		// Handle multi-error unwrapping (errors.Join).
+		type multiUnwrap interface{ Unwrap() []error }
+		if mu, ok := e.(multiUnwrap); ok {
+			for _, sub := range mu.Unwrap() {
+				if isInvalidCatalog(sub) {
+					return true
+				}
+			}
+		}
+		break
 	}
+
 	s := strings.ToLower(err.Error())
 	return strings.Contains(s, "sqlstate 3d000") || (strings.Contains(s, "database") && strings.Contains(s, "does not exist"))
 }

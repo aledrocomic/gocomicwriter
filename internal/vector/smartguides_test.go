@@ -48,10 +48,10 @@ func TestComputeSmartGuides_SnapToCenters(t *testing.T) {
 
 	snapped, guides := ComputeSmartGuides(moving, []Anchor{{Rect: panel, Weight: 1}}, opts)
 	if snapped.X != (200/2 - 50) {
-		t.Fatalf("expected X snapped to center %v, got %v", (200/2 - 50), snapped.X)
+		t.Fatalf("expected X snapped to center %v, got %v", 200/2-50, snapped.X)
 	}
 	if snapped.Y != (100/2 - 30) {
-		t.Fatalf("expected Y snapped to center %v, got %v", (100/2 - 30), snapped.Y)
+		t.Fatalf("expected Y snapped to center %v, got %v", 100/2-30, snapped.Y)
 	}
 	if len(guides) == 0 {
 		t.Fatalf("expected guides for snapping")

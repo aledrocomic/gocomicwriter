@@ -19,8 +19,7 @@ import (
 // BeatIDFor returns a stable identifier for a beat line.
 // For now, we key by the absolute source line number to keep things simple and deterministic.
 // Format: b:<lineNo> (e.g., b:42)
-func BeatIDFor(sceneIdx int, ln script.Line) string { // sceneIdx reserved for future; not used yet
-	_ = sceneIdx // explicitly mark unused for now to avoid linter warning
+func BeatIDFor(ln script.Line) string {
 	return fmt.Sprintf("b:%d", ln.LineNo)
 }
 
@@ -47,10 +46,10 @@ func MappedBeatSet(p domain.Project) map[string]struct{} {
 func ComputeUnmappedBeats(sc script.Script, p domain.Project) []string {
 	mapped := MappedBeatSet(p)
 	var out []string
-	for si, scn := range sc.Scenes {
+	for _, scn := range sc.Scenes {
 		for _, ln := range scn.Lines {
 			if ln.Type == script.LineBeat {
-				id := BeatIDFor(si, ln)
+				id := BeatIDFor(ln)
 				if _, ok := mapped[id]; !ok {
 					out = append(out, id)
 				}

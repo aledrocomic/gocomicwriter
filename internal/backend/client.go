@@ -145,7 +145,7 @@ func (c *Client) GetIndexSnapshot(ctx context.Context, projectID int64) (*IndexS
 	return &env, nil
 }
 
-// Sync types
+// SyncOp Sync types
 type SyncOp struct {
 	OpID       string          `json:"op_id"`
 	Version    int64           `json:"version"`

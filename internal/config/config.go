@@ -256,15 +256,15 @@ func applyEnvOverrides(cfg *AppConfig) {
 	}
 	if v := strings.TrimSpace(os.Getenv(EnvBackendTLSInsec)); v != "" {
 		lv := strings.ToLower(v)
-		cfg.Backend.TLSInsecure = (lv == "1" || lv == "true" || lv == "on" || lv == "yes")
+		cfg.Backend.TLSInsecure = lv == "1" || lv == "true" || lv == "on" || lv == "yes"
 	}
 	if v := strings.TrimSpace(os.Getenv(EnvTelemetryOptIn)); v != "" {
 		lv := strings.ToLower(v)
-		cfg.General.TelemetryOptIn = (lv == "1" || lv == "true" || lv == "on" || lv == "yes")
+		cfg.General.TelemetryOptIn = lv == "1" || lv == "true" || lv == "on" || lv == "yes"
 	}
 	if v := strings.TrimSpace(os.Getenv(EnvEnableServer)); v != "" {
 		lv := strings.ToLower(v)
-		cfg.General.EnableServer = (lv == "1" || lv == "true" || lv == "on" || lv == "yes")
+		cfg.General.EnableServer = lv == "1" || lv == "true" || lv == "on" || lv == "yes"
 	}
 	// logging overrides
 	if v := strings.TrimSpace(os.Getenv(EnvLogLevel)); v != "" {
@@ -275,7 +275,7 @@ func applyEnvOverrides(cfg *AppConfig) {
 	}
 	if v := strings.TrimSpace(os.Getenv(EnvLogSource)); v != "" {
 		lv := strings.ToLower(v)
-		cfg.Logging.Source = (lv == "1" || lv == "true" || lv == "on" || lv == "yes")
+		cfg.Logging.Source = lv == "1" || lv == "true" || lv == "on" || lv == "yes"
 	}
 	if v := strings.TrimSpace(os.Getenv(EnvLogFile)); v != "" {
 		cfg.Logging.File = v

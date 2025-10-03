@@ -39,10 +39,10 @@ Beat Close-up @drama`
 	// Map first beat to panel p1
 	// Beat IDs are based on source line number: find first beat
 	var firstBeatID string
-	for si, scn := range sc.Scenes {
+	for _, scn := range sc.Scenes {
 		for _, ln := range scn.Lines {
 			if ln.Type == script.LineBeat {
-				firstBeatID = BeatIDFor(si, ln)
+				firstBeatID = BeatIDFor(ln)
 				break
 			}
 		}
