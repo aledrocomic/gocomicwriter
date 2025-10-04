@@ -17,6 +17,8 @@ type Node interface {
 	SetTransform(Affine2D)
 	Fill() Fill
 	Stroke() Stroke
+	SetFill(Fill)
+	SetStroke(Stroke)
 	Hit(p Pt) bool
 }
 
@@ -30,8 +32,12 @@ func (b *baseNode) Transform() Affine2D     { return b.xf }
 func (b *baseNode) SetTransform(m Affine2D) { b.xf = m }
 func (b *baseNode) Fill() Fill              { return b.fill }
 func (b *baseNode) Stroke() Stroke          { return b.stroke }
-func (b *baseNode) setFill(f Fill)          { b.fill = f }
-func (b *baseNode) setStroke(s Stroke)      { b.stroke = s }
+func (b *baseNode) SetFill(f Fill)          { b.fill = f }
+func (b *baseNode) SetStroke(s Stroke)      { b.stroke = s }
+
+// Backwards-compatible unexported setters used by some tests
+func (b *baseNode) setFill(f Fill)     { b.fill = f }
+func (b *baseNode) setStroke(s Stroke) { b.stroke = s }
 
 // RectNode draws an axis-aligned rectangle before transform.
 type RectNode struct {

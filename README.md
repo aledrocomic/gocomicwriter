@@ -108,6 +108,8 @@ Entry points:
 - Style Pack manager: import/export styles and templates via the Style Pack menu.
 - Undo/Redo: snapshot-based undo/redo with safeguards (Edit → Undo/Redo).
 - Search panel/omnibox: instant full-text search with filters (character, scene, page range, tags); navigate to results (issue/page/panel) and highlight hits.
+- Storyboard tab: browse pages, list panels with z-order and notes, edit panel notes, and map unmapped script beats to panels. See docs/developer-guide.md#storyboard-tab
+- Colorize tab: RGBA sliders, stroke width, enable/disable fill and stroke, apply to selected shape, and pick from selection. See docs/developer-guide.md#colorization-tab
 - Commenting and review mode on script and pages (minimal; behind feature flag).
 - Thin backend integration (feature-flagged): File → Server → Connect to Server… shows a read-only list of projects from a gcwserver instance and allows simple snapshot text search; comic.json remains the source of truth.
 - Change tracking in script editor.
