@@ -234,3 +234,24 @@ Further reading
 - docs/go_comic_writer_concept.md — Product concept and plan
 - docs/comic.schema.json — Manifest schema
 - README.md — Building, running, and project layout
+
+
+8. Storyboard and Colorization Tabs (Quick Start)
+
+Storyboard basics
+1) Open your project and switch to the Storyboard tab.
+2) Use the Page dropdown to choose a page. The left list shows panels in z-order with their IDs and any note preview.
+3) Click a panel to view details. In Notes, type your storyboard notes and click "Save Notes". Notes are saved to the panel in comic.json.
+4) To link script beats: in Unmapped Beats, select a beat ID, then select a panel in the left list and click "Map Selected Beat to Panel". The linked beat IDs appear in the panel details.
+
+Colorization basics
+1) On the Canvas tab, click to select a shape (rectangle/ellipse/path/etc.).
+2) Switch to the Colorize tab.
+3) Adjust R, G, B, A sliders and (optionally) Stroke width. Toggle Fill Enabled / Stroke Enabled as needed.
+4) Click "Apply Fill to Selected" and/or "Apply Stroke to Selected" to update the selected shape.
+5) Optionally, use "Pick From Selected" to load the selected shape's current style back into the controls.
+6) File → Save to persist changes in your project.
+
+See also
+- Developer details and limitations: docs/developer-guide.md#storyboard-tab and docs/developer-guide.md#colorization-tab
+- Concept and roadmap context: docs/go_comic_writer_concept.md

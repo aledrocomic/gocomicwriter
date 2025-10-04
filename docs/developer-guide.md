@@ -123,6 +123,30 @@ Beat and script integration (experimental)
 - The script editor extracts beats. Beats have stable IDs like `b:<lineNo>`.
 - Panels link beats via `linkedBeats` in the manifest.
 
+## UI tabs — Storyboard and Colorization
+
+### Storyboard Tab
+- Purpose: lightweight planning tool to navigate pages, review panels, jot notes, and link script beats to panels without leaving the canvas.
+- Page selector: a dropdown lists page numbers for the current issue. Selecting a page refreshes the panel list.
+- Panel list: panels are listed with z-order and ID (e.g., "z:3 P-010"). The list also previews the panel's notes if present. Selecting a panel loads its details.
+- Notes editor: edit the selected panel's notes and click "Save Notes" to persist. Notes are stored on the panel object in the project manifest (`panel.notes`) and saved with the usual Save action.
+- Linked beats: the detail view shows beat IDs already linked to the selected panel. This maps to the panel's beat ID list (`panel.beatIds`) in the manifest.
+- Unmapped beats: the right pane shows beat IDs detected from the current script that are not yet linked to any panel. Select a beat and a panel, then click "Map Selected Beat to Panel" to attach it.
+  - Under the hood: beats are parsed by `internal/script`, unmapped IDs are computed via `storage.ComputeUnmappedBeats`, and mapping uses `storage.MapBeatToPanel`, which updates the panel's beat list and triggers a save.
+- Refresh behavior: the storyboard page list, panel list, and unmapped beat list refresh when pages/panels or the script outline change. The UI exposes a `refreshStoryboard` hook that is called on relevant updates.
+- Limitations (Beta): no thumbnails yet, no drag-and-drop reordering, single-panel selection, and simple text-only notes.
+
+### Colorization Tab
+- Purpose: quick color/style adjustments for the selected vector shape on the Canvas.
+- Controls:
+  - RGBA sliders (0–255) with a live swatch preview.
+  - Stroke width slider (0–20, step 0.5).
+  - Enable/disable toggles for Fill and Stroke.
+  - Actions: "Apply Fill to Selected", "Apply Stroke to Selected", and "Pick From Selected" (loads the selected shape's current fill/stroke back into the controls).
+- Data flow: applies to the currently selected node on the canvas (`vector.Node`). Fill uses `vector.Color` and the node's `Fill()`/`SetFill()`. Stroke uses `Stroke()`/`SetStroke()` and updates width and color.
+- Persistence: changes to shapes become part of the page's vector scene and are saved with the project when you use File → Save.
+- Limitations (Beta): operates on a single selected shape; no color palettes or swatches library yet; no multi-select apply; settings are not global styles.
+
 
 ## Storage & Indexing (embedded SQLite) — ops notes
 

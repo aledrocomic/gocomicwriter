@@ -157,6 +157,7 @@ func Run(projectDir string) error {
 	// Forward declarations for UI refreshers referenced before assignment
 	var refreshPagesList func()
 	var refreshPanelsUI func()
+	var refreshStoryboard func()
 
 	applyIssueSnapshot := func(blob []byte) error {
 		if ph == nil {
@@ -258,6 +259,10 @@ func Run(projectDir string) error {
 			pageIdxMap = append(pageIdxMap, p.idx)
 		}
 		pagesList.Refresh()
+		// Keep storyboard in sync
+		if refreshStoryboard != nil {
+			refreshStoryboard()
+		}
 		// select current page in view if possible
 		sel := -1
 		for i, pi := range pageIdxMap {
@@ -346,6 +351,10 @@ func Run(projectDir string) error {
 			pacingLabel.SetText(turnStr + fmt.Sprintf("; TotalBeats:%d", total))
 		} else {
 			pacingLabel.SetText(fmt.Sprintf("Page %d — TotalBeats:%d", pg.Number, total))
+		}
+		// Keep storyboard in sync with panel/page updates
+		if refreshStoryboard != nil {
+			refreshStoryboard()
 		}
 	}
 	btnAddPanel := widget.NewButton("Add Panel", func() {
@@ -1051,6 +1060,10 @@ func Run(projectDir string) error {
 		} else {
 			status.SetText("Script: no beats detected")
 		}
+		// Keep storyboard in sync when outline updates
+		if refreshStoryboard != nil {
+			refreshStoryboard()
+		}
 	}
 	scriptEntry.OnChanged = func(s string) {
 		updateOutline(s)
@@ -1066,6 +1079,9 @@ func Run(projectDir string) error {
 				lastScriptSnapTS = time.Now()
 				lastScriptSnapText = s
 			}
+		}
+		if refreshStoryboard != nil {
+			refreshStoryboard()
 		}
 	}
 
@@ -1316,12 +1332,365 @@ func Run(projectDir string) error {
 	)
 
 	biblePane := container.NewGridWithColumns(3, charBox, locBox, tagBox)
+
+	// Colorization tab UI
+	// RGBA sliders and stroke width
+	rLbl := widget.NewLabel("R: 0")
+	rS := widget.NewSlider(0, 255)
+	rS.Step = 1
+	rS.Value = 240
+	gLbl := widget.NewLabel("G: 0")
+	gS := widget.NewSlider(0, 255)
+	gS.Step = 1
+	gS.Value = 160
+	bLbl := widget.NewLabel("B: 0")
+	bS := widget.NewSlider(0, 255)
+	bS.Step = 1
+	bS.Value = 160
+	aLbl := widget.NewLabel("A: 255")
+	aS := widget.NewSlider(0, 255)
+	aS.Step = 1
+	aS.Value = 255
+	strokeWidthLbl := widget.NewLabel("Stroke: 2")
+	strokeWidth := widget.NewSlider(0, 20)
+	strokeWidth.Step = 0.5
+	strokeWidth.Value = 2
+	fillEnabled := widget.NewCheck("Fill Enabled", nil)
+	fillEnabled.SetChecked(true)
+	strokeEnabled := widget.NewCheck("Stroke Enabled", nil)
+	strokeEnabled.SetChecked(true)
+	// Swatch
+	swatch := canvas.NewRectangle(color.RGBA{R: uint8(rS.Value), G: uint8(gS.Value), B: uint8(bS.Value), A: uint8(aS.Value)})
+	swatch.StrokeWidth = 1
+	swatch.StrokeColor = color.RGBA{R: 30, G: 30, B: 30, A: 255}
+	swatch.SetMinSize(fyne.NewSize(60, 40))
+	updateLabels := func() {
+		rLbl.SetText(fmt.Sprintf("R: %d", int(rS.Value)))
+		gLbl.SetText(fmt.Sprintf("G: %d", int(gS.Value)))
+		bLbl.SetText(fmt.Sprintf("B: %d", int(bS.Value)))
+		aLbl.SetText(fmt.Sprintf("A: %d", int(aS.Value)))
+		strokeWidthLbl.SetText(fmt.Sprintf("Stroke: %.1f", strokeWidth.Value))
+		swatch.FillColor = color.RGBA{R: uint8(rS.Value), G: uint8(gS.Value), B: uint8(bS.Value), A: uint8(aS.Value)}
+		swatch.Refresh()
+	}
+	rS.OnChanged = func(float64) { updateLabels() }
+	gS.OnChanged = func(float64) { updateLabels() }
+	bS.OnChanged = func(float64) { updateLabels() }
+	aS.OnChanged = func(float64) { updateLabels() }
+	strokeWidth.OnChanged = func(float64) { updateLabels() }
+	updateLabels()
+	// Helpers
+	getSelNode := func() vector.Node {
+		if canvasWidget == nil || canvasWidget.selected < 0 || canvasWidget.selected >= len(canvasWidget.scene) {
+			return nil
+		}
+		return canvasWidget.scene[canvasWidget.selected]
+	}
+	applyFillBtn := widget.NewButton("Apply Fill to Selected", func() {
+		n := getSelNode()
+		if n == nil {
+			dialog.ShowInformation("Colorize", "Select a shape on Canvas first.", w)
+			return
+		}
+		f := n.Fill()
+		f.Enabled = fillEnabled.Checked
+		f.Color = vector.Color{R: uint8(rS.Value), G: uint8(gS.Value), B: uint8(bS.Value), A: uint8(aS.Value)}
+		n.SetFill(f)
+		canvasWidget.Refresh()
+		status.SetText("Applied fill color")
+	})
+	applyStrokeBtn := widget.NewButton("Apply Stroke to Selected", func() {
+		n := getSelNode()
+		if n == nil {
+			dialog.ShowInformation("Colorize", "Select a shape on Canvas first.", w)
+			return
+		}
+		s := n.Stroke()
+		s.Enabled = strokeEnabled.Checked
+		s.Color = vector.Color{R: uint8(rS.Value), G: uint8(gS.Value), B: uint8(bS.Value), A: uint8(aS.Value)}
+		s.Width = float32(strokeWidth.Value)
+		n.SetStroke(s)
+		canvasWidget.Refresh()
+		status.SetText("Applied stroke color")
+	})
+	pickFromSelBtn := widget.NewButton("Pick From Selected", func() {
+		n := getSelNode()
+		if n == nil {
+			dialog.ShowInformation("Colorize", "Select a shape first.", w)
+			return
+		}
+		f := n.Fill()
+		s := n.Stroke()
+		if f.Enabled {
+			rS.Value = float64(f.Color.R)
+			gS.Value = float64(f.Color.G)
+			bS.Value = float64(f.Color.B)
+			aS.Value = float64(f.Color.A)
+			fillEnabled.SetChecked(true)
+		} else {
+			fillEnabled.SetChecked(false)
+		}
+		if s.Enabled {
+			strokeEnabled.SetChecked(true)
+			strokeWidth.Value = float64(s.Width)
+		} else {
+			strokeEnabled.SetChecked(false)
+		}
+		updateLabels()
+	})
+	colorizePane := container.NewVBox(
+		widget.NewLabel("Colorization"),
+		container.NewGridWithColumns(2,
+			container.NewVBox(rLbl, rS),
+			container.NewVBox(gLbl, gS),
+		),
+		container.NewGridWithColumns(2,
+			container.NewVBox(bLbl, bS),
+			container.NewVBox(aLbl, aS),
+		),
+		container.NewHBox(widget.NewLabel("Preview:"), swatch),
+		widget.NewSeparator(),
+		container.NewGridWithColumns(2,
+			container.NewVBox(strokeWidthLbl, strokeWidth),
+			container.NewVBox(fillEnabled, strokeEnabled),
+		),
+		container.NewHBox(applyFillBtn, applyStrokeBtn, pickFromSelBtn),
+	)
 	refreshBible()
 
+	// Storyboard tab UI
+	// Keep it lightweight: page selector, panel list (cards), notes editor, and beat mapping
+	var storyboardPane fyne.CanvasObject
+	{
+		// State for storyboard UI
+		sbPageSelect := widget.NewSelect([]string{}, nil)
+		sbPanelListData := []string{}
+		sbPanelIDs := []string{}
+		sbSelectedPanel := -1
+		sbNotes := widget.NewMultiLineEntry()
+		sbNotes.SetPlaceHolder("Storyboard notes for selected panel…")
+		sbLinkedBeats := widget.NewLabel("Linked beats: —")
+		// Unmapped beats controls
+		sbUnmapped := []string{}
+		sbUnmappedList := widget.NewList(
+			func() int { return len(sbUnmapped) },
+			func() fyne.CanvasObject { return widget.NewLabel("") },
+			func(i widget.ListItemID, o fyne.CanvasObject) {
+				if i >= 0 && int(i) < len(sbUnmapped) {
+					o.(*widget.Label).SetText(sbUnmapped[i])
+				} else {
+					o.(*widget.Label).SetText("")
+				}
+			},
+		)
+		sbSelectedUnmapped := -1
+		sbUnmappedList.OnSelected = func(id widget.ListItemID) { sbSelectedUnmapped = int(id) }
+
+		refreshStoryboardPages := func() {
+			if ph == nil || len(ph.Project.Issues) == 0 {
+				sbPageSelect.Options = []string{}
+				sbPageSelect.SetSelected("")
+				return
+			}
+			iss := ph.Project.Issues[currentIssueIdx]
+			opts := make([]string, 0, len(iss.Pages))
+			for _, pg := range iss.Pages {
+				opts = append(opts, strconv.Itoa(pg.Number))
+			}
+			sort.Strings(opts)
+			sbPageSelect.Options = opts
+			if len(opts) > 0 {
+				if sbPageSelect.Selected == "" {
+					sbPageSelect.SetSelected(opts[0])
+				}
+			}
+		}
+
+		refreshStoryboardPanels := func() {
+			sbPanelListData = sbPanelListData[:0]
+			sbPanelIDs = sbPanelIDs[:0]
+			sbSelectedPanel = -1
+			sbNotes.SetText("")
+			sbLinkedBeats.SetText("Linked beats: —")
+			if ph == nil || len(ph.Project.Issues) == 0 || strings.TrimSpace(sbPageSelect.Selected) == "" {
+				return
+			}
+			pageNum, _ := strconv.Atoi(sbPageSelect.Selected)
+			iss := ph.Project.Issues[currentIssueIdx]
+			for _, pg := range iss.Pages {
+				if pg.Number != pageNum {
+					continue
+				}
+				panels := append([]domain.Panel(nil), pg.Panels...)
+				sort.Slice(panels, func(i, j int) bool { return panels[i].ZOrder < panels[j].ZOrder })
+				for _, p := range panels {
+					d := fmt.Sprintf("z:%d %s — %s", p.ZOrder, p.ID, strings.TrimSpace(p.Notes))
+					if strings.TrimSpace(p.Notes) == "" {
+						d = fmt.Sprintf("z:%d %s", p.ZOrder, p.ID)
+					}
+					sbPanelIDs = append(sbPanelIDs, p.ID)
+					sbPanelListData = append(sbPanelListData, d)
+				}
+				break
+			}
+		}
+
+		sbPanelList := widget.NewList(
+			func() int { return len(sbPanelListData) },
+			func() fyne.CanvasObject { return widget.NewLabel("") },
+			func(i widget.ListItemID, o fyne.CanvasObject) {
+				if i >= 0 && int(i) < len(sbPanelListData) {
+					o.(*widget.Label).SetText(sbPanelListData[i])
+				} else {
+					o.(*widget.Label).SetText("")
+				}
+			},
+		)
+		sbPanelList.OnSelected = func(id widget.ListItemID) {
+			sbSelectedPanel = int(id)
+			// populate details
+			if ph == nil || sbSelectedPanel < 0 || sbSelectedPanel >= len(sbPanelIDs) {
+				return
+			}
+			pageNum, _ := strconv.Atoi(sbPageSelect.Selected)
+			iss := ph.Project.Issues[currentIssueIdx]
+			for _, pg := range iss.Pages {
+				if pg.Number != pageNum {
+					continue
+				}
+				for _, p := range pg.Panels {
+					if p.ID == sbPanelIDs[sbSelectedPanel] {
+						sbNotes.SetText(p.Notes)
+						if len(p.BeatIDs) == 0 {
+							sbLinkedBeats.SetText("Linked beats: —")
+						} else {
+							sbLinkedBeats.SetText("Linked beats: " + strings.Join(p.BeatIDs, ", "))
+						}
+						break
+					}
+				}
+				break
+			}
+		}
+
+		sbSaveNotes := widget.NewButton("Save Notes", func() {
+			if ph == nil || sbSelectedPanel < 0 || sbSelectedPanel >= len(sbPanelIDs) {
+				return
+			}
+			pageNum, _ := strconv.Atoi(sbPageSelect.Selected)
+			id := sbPanelIDs[sbSelectedPanel]
+			// update model
+			for i := range ph.Project.Issues {
+				iss := &ph.Project.Issues[i]
+				for j := range iss.Pages {
+					pg := &iss.Pages[j]
+					if pg.Number != pageNum {
+						continue
+					}
+					for k := range pg.Panels {
+						if pg.Panels[k].ID == id {
+							pg.Panels[k].Notes = sbNotes.Text
+							break
+						}
+					}
+				}
+			}
+			if err := storage.Save(ph); err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			refreshStoryboardPanels()
+			sbPanelList.Refresh()
+			status.SetText("Storyboard notes saved.")
+		})
+
+		// Unmapped beats refresh
+		refreshUnmappedBeats := func() {
+			sbUnmapped = sbUnmapped[:0]
+			if ph == nil {
+				sbUnmappedList.Refresh()
+				return
+			}
+			// Parse from current script editor text if available, else try storage.ReadScript
+			var txt string
+			if scriptEntry != nil && scriptEntry.Text != "" {
+				txt = scriptEntry.Text
+			} else if ph != nil {
+				t, _ := storage.ReadScript(ph)
+				txt = t
+			}
+			sc, _ := script.Parse(txt)
+			ids := storage.ComputeUnmappedBeats(sc, ph.Project)
+			sbUnmapped = append(sbUnmapped, ids...)
+			sbSelectedUnmapped = -1
+			sbUnmappedList.Refresh()
+		}
+
+		btnMapBeat := widget.NewButton("Map Selected Beat to Panel", func() {
+			if ph == nil || sbSelectedPanel < 0 || sbSelectedPanel >= len(sbPanelIDs) {
+				return
+			}
+			if sbSelectedUnmapped < 0 || sbSelectedUnmapped >= len(sbUnmapped) {
+				return
+			}
+			pageNum, _ := strconv.Atoi(sbPageSelect.Selected)
+			panelID := sbPanelIDs[sbSelectedPanel]
+			beatID := sbUnmapped[sbSelectedUnmapped]
+			if err := storage.MapBeatToPanel(ph, pageNum, panelID, beatID); err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			if err := storage.Save(ph); err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			refreshStoryboardPanels()
+			sbPanelList.Refresh()
+			refreshUnmappedBeats()
+			status.SetText("Beat mapped to panel.")
+		})
+
+		// Layout
+		left := container.NewBorder(container.NewVBox(widget.NewLabel("Page"), sbPageSelect), nil, nil, nil, sbPanelList)
+		right := container.NewVBox(
+			widget.NewLabel("Panel Details"),
+			sbLinkedBeats,
+			widget.NewSeparator(),
+			widget.NewLabel("Notes"),
+			sbNotes,
+			container.NewHBox(sbSaveNotes),
+			widget.NewSeparator(),
+			widget.NewLabel("Unmapped Beats (from Script)"),
+			sbUnmappedList,
+			container.NewHBox(btnMapBeat),
+		)
+		sp := container.NewHSplit(left, right)
+		sp.Offset = 0.35
+		storyboardPane = sp
+
+		// Hook page select
+		sbPageSelect.OnChanged = func(s string) {
+			refreshStoryboardPanels()
+		}
+		// Initial
+		refreshStoryboardPages()
+		refreshStoryboardPanels()
+		refreshUnmappedBeats()
+		// Expose refresh to outer scope
+		refreshStoryboard = func() {
+			refreshStoryboardPages()
+			refreshStoryboardPanels()
+			refreshUnmappedBeats()
+		}
+	}
+
 	// Tabs
-	tabs := container.NewAppTabs(
+	var tabs *container.AppTabs
+	tabs = container.NewAppTabs(
 		container.NewTabItem("Canvas", canvasPane),
+		container.NewTabItem("Colorize", colorizePane),
 		container.NewTabItem("Script", scriptPane),
+		container.NewTabItem("Storyboard", storyboardPane),
 		container.NewTabItem("Bible", biblePane),
 	)
 	editorContent := container.NewBorder(nil, status, nil, nil, tabs)
@@ -3572,11 +3941,19 @@ func (r *pageCanvasRenderer) Layout(size fyne.Size) {
 		rc.Show()
 		rc.Resize(fyne.NewSize(float32ToFixed(float32(p1.X-p0.X)), float32ToFixed(float32(p1.Y-p0.Y))))
 		rc.Move(fyne.NewPos(float32ToFixed(p0.X), float32ToFixed(p0.Y)))
-		// Color per node demo
-		if i%2 == 0 {
-			rc.FillColor = color.RGBA{R: 240, G: 160, B: 160, A: 255}
+		// Apply node style
+		f := n.Fill()
+		if f.Enabled {
+			rc.FillColor = color.RGBA{R: f.Color.R, G: f.Color.G, B: f.Color.B, A: f.Color.A}
 		} else {
-			rc.FillColor = color.RGBA{R: 160, G: 200, B: 240, A: 255}
+			rc.FillColor = color.RGBA{R: 0, G: 0, B: 0, A: 0}
+		}
+		s := n.Stroke()
+		if s.Enabled {
+			rc.StrokeColor = color.RGBA{R: s.Color.R, G: s.Color.G, B: s.Color.B, A: s.Color.A}
+			rc.StrokeWidth = float32ToFixed(s.Width)
+		} else {
+			rc.StrokeWidth = 0
 		}
 		rc.Refresh()
 	}
